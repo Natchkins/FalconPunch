@@ -1,7 +1,7 @@
 {
-  "active": "Smash Deluxe for 13.0.5",
+  "active": "TR4SH Rebuffed 1.46",
   "setups": {
-    "Smash Deluxe for 13.0.5": {
+    "Smash Deluxe 13.0.5": {
       "created": "2026-05-06T14:05:34.538469",
       "template": "Custom",
       "deluxe_config": {
@@ -15,6 +15,19 @@
         "libssbu_online_deluxe.nro"
       ],
       "sources": {}
+    },
+    "TR4SH Rebuffed 1.46": {
+      "created": "2026-11-19T21:45:39.855272",
+      "template": "Custom",
+      "type": "TR4SH Rebuffed",
+      "deluxe_config": {
+        "offline_singles": "Vanilla",
+        "offline_doubles": "Vanilla",
+        "online_singles": "LessLag",
+        "online_doubles": "LessLagDoubles",
+        "overclocker": true
+      },
+      "plugins": []
     }
   }
 }
