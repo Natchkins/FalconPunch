@@ -1,0 +1,84 @@
+# ── Caches ──────────────────────────────────────────────
+# Mod archive + extracted-tree cache. Lives under
+# %LOCALAPPDATA%/smash_night/mod_cache/ at runtime; the legacy
+# in-repo path is listed here so a fresh checkout never picks it
+# up again.
+.mod_cache/
+.render_cache/
+
+# ── Python ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# ── Rust (ssbh_render) ──────────────────────────────────
+ssbh_render/target/
+**/*.rs.bk
+
+# ── Editor / IDE ────────────────────────────────────────
+.vscode/
+.idea/
+.claude/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+*.bak
+
+# ── Test/scratch artifacts ──────────────────────────────
+_test_*.png
+*.tmp
+
+# ── Tools the app auto-downloads (not source) ───────────
+ssbh_editor/
+ultimate_tex_cli/
+
+# ── User-state JSONs ────────────────────────────────────
+# gb_profiles.json and friends are personal — don't share via git.
+gb_profiles.json
+gb_favorites.json
+gb_audit_cache.json
+gb_touched_cache.json
+gb_sets.json
+
+# ── Secrets ─────────────────────────────────────────────
+# Personal GitHub token (raises API rate limit 60→5000/hr).
+# Never commit a real token.
+github_token.txt
+github_token.txt.*
+!github_token.txt.example
+
+# ── Switch SD provisioning downloads ────────────────────
+switch_setup/downloads/
+
+# Runtime state: rotating banner counter, bumped on every launch
+assets/banners/.banner_index
+
+# No executables in the repository at all. The bundled tools
+# (TegraRcmSmash, UnRAR, VGAudioCli, nus3audio, the APX driver installer)
+# stay on disk and ship inside the release zip, not in git.
+*.exe
+
+# PyInstaller launcher build (build_exe.bat) - the exe is a build product
+Smash Night.exe
+build/
+dist/
+*.spec
+gb_settings.json
+release/
+launcher_error.log
+voice_packs/*/template/
+voice_packs/*/work/
+voice_packs/*/out/
+local_mods/
+
+# ── Not published (kept on disk only) ───────────────────
+# TegraRcmGUI extras the app never calls: third-party payloads
+# (SX Loader, ReiNX, biskeydump), memloader / shofel2 helpers, its log.
+rcm_tools/TegraRcmGUI_v2.6_portable/favorites/
+rcm_tools/TegraRcmGUI_v2.6_portable/tools/
+rcm_tools/TegraRcmGUI_v2.6_portable/out.log
+rcm_tools/TegraRcmGUI_v2.6_portable/presets.conf

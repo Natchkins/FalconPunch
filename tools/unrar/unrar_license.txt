@@ -1,0 +1,8 @@
+UnRAR.exe is copyright (c) Alexander Roshal / RARLAB (https://www.rarlab.com).
+
+RARLAB's UnRAR utility is free software: the UnRAR license permits it to be
+freely distributed, with the condition that it is not used to create a RAR
+compressor or to reverse-engineer the RAR compression algorithm. The full
+terms ship with WinRAR (License.txt) and are published at
+https://www.rarlab.com/license.htm. Only the UnRAR extractor is bundled here;
+WinRAR itself is not.

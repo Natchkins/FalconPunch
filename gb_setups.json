@@ -1,0 +1,20 @@
+{
+  "active": "Smash Deluxe for 13.0.5",
+  "setups": {
+    "Smash Deluxe for 13.0.5": {
+      "created": "2026-05-06T14:05:34.538469",
+      "template": "Custom",
+      "deluxe_config": {
+        "offline_singles": "Vanilla",
+        "offline_doubles": "Vanilla",
+        "online_singles": "LessLag",
+        "online_doubles": "LessLagDoubles",
+        "overclocker": true
+      },
+      "plugins": [
+        "libssbu_online_deluxe.nro"
+      ],
+      "sources": {}
+    }
+  }
+}

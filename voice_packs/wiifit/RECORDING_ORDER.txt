@@ -1,0 +1,86 @@
+# Wii Fit Trainer voice pack - recording order
+# Record in THIS order, one take per line. The builder names the
+# Nth recording after the Nth entry here.
+# Format: <number>. <clip name>  -  <what it is for>
+# Bank: sound/bank/fighter_voice/vc_wiifit_cXX.nus3audio (80 clips).
+
+ 1. vc_wiifit_attack01  -  attack grunt (jabs/tilts/smashes/aerials) - vary them
+ 2. vc_wiifit_attack02  -  attack grunt (jabs/tilts/smashes/aerials) - vary them
+ 3. vc_wiifit_attack03  -  attack grunt (jabs/tilts/smashes/aerials) - vary them
+ 4. vc_wiifit_attack04  -  attack grunt (jabs/tilts/smashes/aerials) - vary them
+ 5. vc_wiifit_attack05  -  attack grunt (jabs/tilts/smashes/aerials) - vary them
+ 6. vc_wiifit_attack06  -  attack grunt (jabs/tilts/smashes/aerials) - vary them
+ 7. vc_wiifit_attack07  -  attack grunt (jabs/tilts/smashes/aerials) - vary them
+ 8. vc_wiifit_jump  -  jump grunt
+ 9. vc_wiifit_ottotto  -  wobbling at the ledge edge, "oh-oh-oh"
+10. vc_wiifit_damage_s  -  hit, small
+11. vc_wiifit_damage_m  -  hit, medium
+12. vc_wiifit_damage_l  -  hit, hard
+13. vc_wiifit_futtobi01  -  launched across the stage, longer yell
+14. vc_wiifit_futtobi02  -  launched across the stage, longer yell (variant)
+15. vc_wiifit_missfoot01  -  tripped / footstooled, surprised yelp
+16. vc_wiifit_missfoot02  -  tripped / footstooled, surprised yelp (variant)
+17. vc_wiifit_damage_twinkle  -  star KO: long fading scream
+18. vc_wiifit_knockout  -  KO'd off the blast zone: scream
+19. vc_wiifit_swimup  -  gasp surfacing from water
+20. vc_wiifit_furafura  -  dizzy / stunned wobble
+21. vc_wiifit_furasleep  -  asleep: snore or sigh
+22. vc_wiifit_wakeup  -  snapping awake
+23. vc_wiifit_heavyget  -  straining to lift a heavy item
+24. vc_wiifit_passive  -  tech roll grunt
+25. vc_wiifit_cliffcatch  -  grabbing the ledge
+26. vc_wiifit_special_N01  -  neutral special (Sun Salutation): charging
+27. vc_wiifit_special_N02  -  neutral special (Sun Salutation): firing
+28. vc_wiifit_special_L01  -  down special (Deep Breathing): slow inhale
+29. vc_wiifit_special_L02  -  down special (Deep Breathing): release
+30. vc_wiifit_final01  -  Final Smash line (coaching energy, counting, encouragement)
+31. vc_wiifit_final02  -  Final Smash line (coaching energy, counting, encouragement)
+32. vc_wiifit_final03  -  Final Smash line (coaching energy, counting, encouragement)
+33. vc_wiifit_final04  -  Final Smash line (coaching energy, counting, encouragement)
+34. vc_wiifit_final05  -  Final Smash line (coaching energy, counting, encouragement)
+35. vc_wiifit_final06  -  Final Smash line (coaching energy, counting, encouragement)
+36. vc_wiifit_appeal01  -  up taunt
+37. vc_wiifit_appeal02  -  side taunt
+38. vc_wiifit_appeal03  -  down taunt
+39. vc_wiifit_win01  -  victory-screen line (up to ~4 s)
+40. vc_wiifit_win02  -  victory-screen line (up to ~4 s)
+41. vc_wiifit_win03  -  victory-screen line (up to ~4 s)
+42. vc_wiifit_win04  -  victory-screen line (up to ~4 s)
+43. vc_wiifit_win05  -  victory-screen line (up to ~4 s)
+44. vc_wiifit_win06  -  victory-screen line (up to ~4 s)
+45. vc_wiifit_win07  -  victory-screen line (up to ~4 s)
+46. vc_wiifit_win08  -  victory-screen line (up to ~4 s)
+47. vc_wiifit_win09  -  victory-screen line (up to ~4 s)
+48. vc_wiifit_win10  -  victory-screen line (up to ~4 s)
+49. vc_wiifit_win11  -  victory-screen line (up to ~4 s)
+50. vc_wiifit_win12  -  victory-screen line (up to ~4 s)
+51. vc_wiifit_win13  -  victory-screen line (up to ~4 s)
+52. vc_wiifit_win14  -  victory-screen line (up to ~4 s)
+53. vc_wiifit_win15  -  victory-screen line (up to ~4 s)
+54. vc_wiifit_win16  -  victory-screen line (up to ~4 s)
+55. vc_wiifit_win17  -  victory-screen line (up to ~4 s)
+56. vc_wiifit_win18  -  victory-screen line (up to ~4 s)
+57. vc_wiifit_win19  -  victory-screen line (up to ~4 s)
+58. vc_wiifit_win20  -  victory-screen line (up to ~4 s)
+59. vc_wiifit_win21  -  victory-screen line (up to ~4 s)
+60. vc_wiifit_ingame01  -  in-match coaching line, said while fighting (short)
+61. vc_wiifit_ingame02  -  in-match coaching line, said while fighting (short)
+62. vc_wiifit_ingame03  -  in-match coaching line, said while fighting (short)
+63. vc_wiifit_ingame04  -  in-match coaching line, said while fighting (short)
+64. vc_wiifit_ingame05  -  in-match coaching line, said while fighting (short)
+65. vc_wiifit_ingame06  -  in-match coaching line, said while fighting (short)
+66. vc_wiifit_ingame07  -  in-match coaching line, said while fighting (short)
+67. vc_wiifit_ingame08  -  in-match coaching line, said while fighting (short)
+68. vc_wiifit_ingame09  -  in-match coaching line, said while fighting (short)
+69. vc_wiifit_ingame10  -  in-match coaching line, said while fighting (short)
+70. vc_wiifit_ingame11  -  in-match coaching line, said while fighting (short)
+71. vc_wiifit_ingame12  -  in-match coaching line, said while fighting (short)
+72. vc_wiifit_ingame13  -  in-match coaching line, said while fighting (short)
+73. vc_wiifit_ingame14  -  in-match coaching line, said while fighting (short)
+74. vc_wiifit_ingame15  -  in-match coaching line, said while fighting (short)
+75. vc_wiifit_ingame16  -  in-match coaching line, said while fighting (short)
+76. vc_wiifit_ingame17  -  in-match coaching line, said while fighting (short)
+77. vc_wiifit_ingame18  -  in-match coaching line, said while fighting (short)
+78. vc_wiifit_ingame19  -  in-match coaching line, said while fighting (short)
+79. vc_wiifit_ingame20  -  in-match coaching line, said while fighting (short)
+80. vc_wiifit_ingame21  -  in-match coaching line, said while fighting (short)
