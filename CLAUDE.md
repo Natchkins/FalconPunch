@@ -30,7 +30,15 @@ GitHub release on `RELEASES_REPO` with `github_token.txt` and uploads both asset
 release tag (`check_for_update`, checked once ~4 s after start-up; the button turns green with the version when one exists); in an installed release
 `_apply_update` downloads `SmashNight-win64.zip`, writes a batch file that waits for the PID to exit, expands the zip and robocopies it over `SCRIPT_DIR`
 (no `/MIR`, so profiles / caches / token survive) and relaunches; in a dev checkout it just says to git pull. `release/` is git-ignored. Both assets must exist
-in every release or installed copies can't update.
+in every release or installed copies can't update. Every release after the first goes through `release.py --bump patch|minor|major` (raises `APP_VERSION`,
+commits and pushes it, then builds and publishes); `release.py` refuses to publish when the tag already exists on an older commit, so a version is never
+reused for new code. The token in `github_token.txt` must be a fine-grained one with *Contents: Read and write* on `RELEASES_REPO`.
+**No `.exe` is tracked in git** (`*.exe` is git-ignored since 2026-11-19, at the user's request): the bundled tools (TegraRcmSmash + APX driver installer,
+UnRAR, VGAudioCli, nus3audio) live on disk only and reach users through the release build, which copies them from the working folder — a fresh clone
+does not have them, so releases must be built from a folder that does. `build_release.py`'s `EXCLUDE` keeps TegraRcmGUI's unused extras (`favorites/`,
+`tools/`, its log and presets — the same list `.gitignore` withholds) out of the release. `launcher.py` treats a leading `smash_night.py` argument as the
+app starting a second copy of itself, so `Smash Night.exe smash_night.py --view-model <dir>` (the interactive 3D viewer subprocess) runs the app; only a
+dashed first argument *without* that prefix (`-m pip`, `-c`) is an interpreter call (delegated in dev, a no-op in a release).
 
 ## Voice packs
 

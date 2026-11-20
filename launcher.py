@@ -107,12 +107,17 @@ def main():
         return 1
 
     args = sys.argv[1:]
-    if args and os.path.basename(args[0]).lower() == APP:
+    app_call = bool(args) and os.path.basename(args[0]).lower() == APP
+    if app_call:
         args = args[1:]                      # the app re-exec'ing itself
+    # "-m pip …" / "-c …" are interpreter calls; "smash_night.py --view-model
+    # <dir>" is the app starting a second copy of itself (the 3D viewer) and
+    # its dashed arguments belong to the app.
+    interp_call = bool(args) and args[0].startswith("-") and not app_call
 
     release = is_release_install(here)
     if release:
-        if args and args[0].startswith("-"):
+        if interp_call:
             # No interpreter to delegate to; everything is bundled.
             return 0
         sys.path.insert(0, here)
@@ -120,7 +125,7 @@ def main():
         py = _ensure_venv(here)
         if not py:
             return 1
-        if args and args[0].startswith("-"):
+        if interp_call:
             # Interpreter-style call (pip, -c, …): hand it to the real python.
             return subprocess.call([py] + args, cwd=here)
         base = _base_prefix(py)

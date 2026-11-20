@@ -45,6 +45,20 @@ RESOURCES = [
 ]
 # Never shipped even if inside a shipped folder.
 PRUNE = {"__pycache__", "unused", ".git", "downloads"}
+# Paths (relative to the checkout) left out of the release: TegraRcmGUI
+# extras the app never calls — third-party payloads (SX Loader, ReiNX,
+# biskeydump), memloader / shofel2 helpers, the GUI's own log and presets.
+# Same list .gitignore keeps out of the repository.  TegraRcmSmash.exe,
+# its DLLs and the APX driver installer stay.
+_RCM = os.path.join("rcm_tools", "TegraRcmGUI_v2.6_portable")
+EXCLUDE = {os.path.normcase(os.path.join(_RCM, n)) for n in (
+    "favorites", "tools", "favorites.conf", "presets.conf", "out.log")}
+
+
+def _ignore(d, names):
+    rel = os.path.relpath(d, HERE)
+    return [n for n in names if n in PRUNE
+            or os.path.normcase(os.path.normpath(os.path.join(rel, n))) in EXCLUDE]
 
 # Third-party packages the app imports; PyInstaller's hooks collect numpy /
 # scipy / PIL properly only when the analysis *sees* an import, and the
@@ -125,8 +139,7 @@ def build_app(version):
         src = os.path.join(HERE, rel)
         dst = os.path.join(app_dir, rel)
         if os.path.isdir(src):
-            shutil.copytree(src, dst, dirs_exist_ok=True,
-                            ignore=lambda d, names: [n for n in names if n in PRUNE])
+            shutil.copytree(src, dst, dirs_exist_ok=True, ignore=_ignore)
         elif os.path.isfile(src):
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             shutil.copy2(src, dst)
