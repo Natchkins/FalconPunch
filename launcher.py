@@ -89,6 +89,61 @@ def _base_prefix(py):
     return r.stdout.strip()
 
 
+def _app_code(app_path):
+    """Compiled smash_night.py, cached under %LOCALAPPDATA%\\SmashNight.
+    A script run as __main__ never gets a .pyc, so the 1 MB source was
+    recompiled (~0.6 s) at every launch.  The cache is keyed by the file's
+    path, size, mtime and the interpreter's bytecode version; any problem
+    reading or writing it falls back to a plain compile."""
+    import hashlib
+    import importlib.util
+    import marshal
+    st = os.stat(app_path)
+    key = "%s|%d|%d|%s" % (os.path.normcase(app_path), st.st_size,
+                           st.st_mtime_ns, importlib.util.MAGIC_NUMBER.hex())
+    cdir = os.path.join(os.environ.get("LOCALAPPDATA")
+                        or os.path.expanduser("~"), "SmashNight")
+    cfile = os.path.join(cdir, "app_code_%s.bin" % hashlib.sha1(
+        os.path.normcase(app_path).encode("utf-8")).hexdigest()[:12])
+    try:
+        with open(cfile, "rb") as f:
+            if f.readline().rstrip(b"\n").decode("utf-8") == key:
+                return marshal.loads(f.read())
+    except Exception:
+        pass
+    with open(app_path, "rb") as f:
+        code = compile(f.read(), app_path, "exec")
+    try:
+        os.makedirs(cdir, exist_ok=True)
+        tmp = cfile + ".tmp%d" % os.getpid()
+        with open(tmp, "wb") as f:
+            f.write(key.encode("utf-8") + b"\n" + marshal.dumps(code))
+        os.replace(tmp, cfile)
+    except Exception:
+        pass
+    return code
+
+
+def _run_app(app_path):
+    """Run smash_night.py as __main__ (what runpy.run_path did, minus the
+    recompile)."""
+    import types
+    try:
+        code = _app_code(app_path)
+    except SyntaxError:
+        raise
+    except Exception:
+        runpy.run_path(app_path, run_name="__main__")
+        return
+    mod = types.ModuleType("__main__")
+    mod.__file__ = app_path
+    mod.__cached__ = None
+    mod.__spec__ = None
+    mod.__package__ = None
+    sys.modules["__main__"] = mod
+    exec(code, mod.__dict__)
+
+
 def is_release_install(here):
     """True for the zipped / installed release: Python and every
     dependency live in _internal/ next to the exe, there is no venv."""
@@ -143,7 +198,7 @@ def main():
 
     try:
         sys.argv = [app_path] + args
-        runpy.run_path(app_path, run_name="__main__")
+        _run_app(app_path)
         return 0
     except SystemExit as e:
         return int(e.code or 0) if isinstance(e.code, int) or e.code is None else 1

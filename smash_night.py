@@ -260,17 +260,60 @@ try:
 except ImportError:
     HAS_RARFILE = False
 
+class _LazyModule:
+    """Stand-in for a module that is slow to import: the real import runs
+    on first attribute access (any thread — Python's import lock makes it
+    safe) or when _prewarm_3d() gets to it.  trimesh + pyrender cost 6+
+    seconds between them; importing them at the top of the file kept the
+    splash off the screen for that long."""
+
+    def __init__(self, name):
+        self.__dict__["_name"] = name
+        self.__dict__["_mod"] = None
+
+    def _load(self):
+        mod = self.__dict__["_mod"]
+        if mod is None:
+            import importlib
+            mod = importlib.import_module(self.__dict__["_name"])
+            self.__dict__["_mod"] = mod
+        return mod
+
+    def __getattr__(self, attr):
+        return getattr(self._load(), attr)
+
+
 try:
     import numpy as np
     import ssbh_data_py
-    import trimesh
-    import pyrender
+    import importlib.util as _ilu
+    # Presence check only (no import): see _LazyModule.
+    if _ilu.find_spec("trimesh") is None or _ilu.find_spec("pyrender") is None:
+        raise ImportError("trimesh / pyrender not installed")
+    trimesh = _LazyModule("trimesh")
+    pyrender = _LazyModule("pyrender")
     HAS_3D_RENDER = True
     # numpy 2.0 removed np.infty; pyrender.Viewer still references it
     if not hasattr(np, "infty"):
         np.infty = np.inf
 except ImportError:
     HAS_3D_RENDER = False
+
+
+def _prewarm_3d():
+    """Import the 3D stack on a background thread (started by main() once
+    the splash is on its way) so the first preview doesn't pay for it.
+    A broken install turns the 3D features off instead of raising later."""
+    global HAS_3D_RENDER
+    if not HAS_3D_RENDER:
+        return
+    try:
+        trimesh._load()
+        pyrender._load()
+    except Exception as e:
+        HAS_3D_RENDER = False
+        print(f"[Smash Night] 3D preview stack unavailable: {e}",
+              file=sys.stderr)
 
 # ─────────────────────────────────────────────────────────
 #  CONSTANTS
@@ -23016,31 +23059,69 @@ def show_splash(root, ms=SPLASH_MS):
         splash.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
         splash.update()
         alias = _play_splash_sound()
-        done = tk.BooleanVar(root, value=False)
-        root.after(ms, lambda: done.set(True))
-        # Fade in: step the window alpha from 0 to 1 over SPLASH_FADE_MS.
-        step_ms, t0 = 16, time.time()
-
-        def _fade():
-            if done.get():
-                return
+        t0 = time.time()
+        # Fade in: step the window alpha from 0 to 1 over SPLASH_FADE_MS,
+        # pumping Tk only for that long.
+        while True:
             k = min(1.0, (time.time() - t0) * 1000 / max(1, SPLASH_FADE_MS))
-            try:
-                splash.attributes("-alpha", k)
-            except tk.TclError:
-                return
-            if k < 1.0:
-                root.after(step_ms, _fade)
-        _fade()
-        root.wait_variable(done)
-        if alias:
-            try:
-                _mci(f'close {alias}')
-            except Exception:
-                pass
-        splash.destroy()
+            splash.attributes("-alpha", k)
+            splash.update()
+            if k >= 1.0:
+                break
+            time.sleep(0.016)
+        # No longer topmost: a dialog raised while the UI builds (SD drive
+        # prompt, an error box) must not end up hidden behind the photo.
+        splash.attributes("-topmost", False)
+        splash.update()
+        return {"win": splash, "t0": t0, "ms": ms, "alias": alias}
     except Exception as e:
         print(f"  (splash skipped: {e})", file=sys.stderr)
+        return None
+
+
+def close_splash(root, handle):
+    """Take the splash down — called once the main window is on screen, so
+    there is never a moment with nothing showing."""
+    if not handle:
+        return
+    try:
+        if handle.get("alias"):
+            try:
+                _mci(f'close {handle["alias"]}')
+            except Exception:
+                pass
+        handle["win"].destroy()
+    except Exception as e:
+        print(f"  (splash close: {e})", file=sys.stderr)
+
+
+def _set_dpi_awareness():
+    """Make the process per-monitor DPI aware before the first window.
+
+    pyglet does exactly this when it is imported (pyrender pulls it in).
+    While pyrender was imported at the top of the file that happened
+    before any window existed; now that it loads in the background
+    (_prewarm_3d) the switch would land mid-splash and Windows rescales
+    and moves the windows already on screen.  Same calls, same order, as
+    pyglet.display.win32.set_dpi_awareness."""
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        try:
+            user32.SetProcessDpiAwarenessContext.restype = ctypes.c_bool
+            user32.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+            if user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+                return                    # PER_MONITOR_AWARE_V2
+        except Exception:
+            pass
+        try:
+            if ctypes.windll.shcore.SetProcessDpiAwareness(2) == 0:
+                return                    # PROCESS_PER_MONITOR_DPI_AWARE
+        except Exception:
+            pass
+        user32.SetProcessDPIAware()
+    except Exception:
+        pass
 
 
 def main():
@@ -23056,13 +23137,20 @@ def main():
         print("NOTE: Install Pillow for thumbnail previews: pip install Pillow")
 
     _claim_taskbar_identity()
-    _ensure_start_menu_shortcut()
+    _set_dpi_awareness()
     root = tk.Tk()
     # Keep the bare main window hidden through the splash *and* the UI
     # build: mapping it any earlier shows an empty default-size white
     # box at the top-left until _build_ui sets the real geometry.
     root.withdraw()
-    show_splash(root)
+    # Nothing slow may run before the splash.  The 3D stack imports in the
+    # background while it shows; the Start-menu shortcut (pywin32 + COM)
+    # is refreshed after it.
+    threading.Thread(target=_prewarm_3d, daemon=True).start()
+    # The splash stays up while the UI is built behind it and comes down
+    # only after the main window is drawn — no gap with nothing on screen.
+    splash = show_splash(root)
+    _ensure_start_menu_shortcut()
 
     drives = _present_sd_drives()
     if len(drives) > 1:
@@ -23071,10 +23159,29 @@ def main():
         # auto-switch back to whatever _detect_sd_drive() prefers.
         _apply_sd_drive(picked, pin=True)
 
-    app = GameBananaBrowser(root)
-    root.update_idletasks()      # geometry applied before first map
-    app._set_taskbar_icon()      # icon in place before the taskbar button exists
-    root.deiconify()
+    try:
+        app = GameBananaBrowser(root)
+        root.update_idletasks()  # geometry applied before first map
+        app._set_taskbar_icon()  # icon in place before the taskbar button exists
+    except BaseException:
+        close_splash(root, splash)
+        raise
+
+    # The reveal runs *inside* mainloop, not before it: the UI build starts
+    # worker threads that read Tk variables, and Tk refuses those calls
+    # ("main thread is not in main loop") until mainloop is dispatching.
+    def _reveal():
+        try:
+            root.deiconify()
+            root.update()        # main window painted before the splash goes
+        finally:
+            close_splash(root, splash)
+
+    left_ms = 0
+    if splash:
+        left_ms = int(max(0.0, splash["ms"] / 1000.0
+                          - (time.time() - splash["t0"])) * 1000)
+    root.after(left_ms, _reveal)
     root.mainloop()
 
 
