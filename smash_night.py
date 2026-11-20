@@ -9870,7 +9870,12 @@ class GameBananaBrowser:
                       f"(you have v{APP_VERSION}).")
                 if interactive:
                     self._offer_update(info)
-            elif interactive:
+                return
+            # Nothing newer (or GitHub unreachable): put the button back —
+            # a click leaves it on "Checking…" otherwise.
+            self.update_btn.configure(text="⬆ Update", width=10,
+                                      bg=T.SURFACE1, fg=T.FG, state="normal")
+            if interactive:
                 if info is None:
                     messagebox.showinfo(
                         "Update", "Could not reach GitHub to check for a "
