@@ -283,7 +283,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # + SmashNight-Setup.exe (build_release.py) and publishes a GitHub release
 # tagged v<APP_VERSION> with both assets.  Installed copies compare their
 # APP_VERSION with the newest release tag and offer "Update".
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 RELEASES_REPO = "Natchkins/FalconPunch"
 RELEASE_ZIP_ASSET = "SmashNight-win64.zip"
 
