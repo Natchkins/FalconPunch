@@ -33,6 +33,7 @@ WORK = os.path.join(tempfile.gettempdir(), "smash_night_release")
 ZIP_NAME = "SmashNight-win64.zip"
 SETUP_NAME = "SmashNight-Setup.exe"
 APP_NAME = "Smash Night"
+EMBLEM_PNG = "icons8-super-smash-bros-48.png"   # installer header image
 
 # Shipped next to the exe (the app resolves all of these from SCRIPT_DIR,
 # the folder smash_night.py lives in).  Missing optional ones are skipped.
@@ -172,6 +173,9 @@ def build_installer(zpath):
         "--name", SETUP_NAME[:-4],
         "--icon", os.path.join(HERE, "smash_night.ico"),
         "--add-data", f"{zpath}{os.pathsep}.",
+        # window / taskbar icon and the emblem shown in the header
+        "--add-data", f"{os.path.join(HERE, 'smash_night.ico')}{os.pathsep}.",
+        "--add-data", f"{os.path.join(HERE, EMBLEM_PNG)}{os.pathsep}.",
         "--distpath", dist,
         "--workpath", os.path.join(WORK, "build_setup"),
         "--specpath", WORK,

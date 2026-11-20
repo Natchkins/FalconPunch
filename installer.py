@@ -143,7 +143,18 @@ def main():
     FONT = "Segoe UI"
     frame = tk.Frame(root, padx=24, pady=18)
     frame.pack()
-    tk.Label(frame, text="Smash Night", font=(FONT, 16, "bold")).pack(anchor="w")
+    head = tk.Frame(frame)
+    head.pack(anchor="w")
+    try:
+        emblem = tk.PhotoImage(file=os.path.join(
+            getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__))),
+            "icons8-super-smash-bros-48.png"))
+        lbl = tk.Label(head, image=emblem)
+        lbl.image = emblem                # keep a reference
+        lbl.pack(side="left", padx=(0, 10))
+    except Exception:
+        pass
+    tk.Label(head, text="Smash Night", font=(FONT, 16, "bold")).pack(side="left")
     tk.Label(frame, text="Installs to:", font=(FONT, 9), fg="#555").pack(
         anchor="w", pady=(4, 0))
     tk.Label(frame, text=install_dir(), font=(FONT, 9)).pack(anchor="w")
