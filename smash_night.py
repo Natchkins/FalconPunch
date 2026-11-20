@@ -945,11 +945,20 @@ KNOWN_PLUGINS = {
         "desc": "File replacement engine — loads skin mods"},
     ONLINE_DELUXE_NRO: {"name": "SSBU Online Deluxe", "wifi_safe": True,
         "desc": "Online delay control + low-lag render profiles"},
+    # NRO Hook and Smashline are shared by more than one Setup type (the
+    # Online Deluxe chain and TR4SH Rebuffed); each type takes them from
+    # its own source — see SETUP_TYPES and the source stamps that tell
+    # the copies apart on the card.
     "libnro_hook.nro": {"name": "NRO Hook", "wifi_safe": True,
-        "desc": "Required by SSBU Online Deluxe", "dependency": True},
-    "libsmashline_plugin.nro": {"name": "Smashline", "wifi_safe": True,
-        "desc": "Required by SSBU Online Deluxe — fighter hooks",
+        "desc": "Lets plugins hook the game's modules — dependency",
         "dependency": True},
+    "libsmashline_plugin.nro": {"name": "Smashline", "wifi_safe": True,
+        "desc": "Fighter script hooks — dependency (version set by the Setup type)",
+        "dependency": True},
+    "libcss_preserve.nro": {"name": "CSS Preserve", "wifi_safe": False,
+        "desc": "Shipped inside the TR4SH Rebuffed pack — installed and "
+                "removed with it", "dependency": True,
+        "pack": "tr4sh_rebuffed"},
     "libimgui_smash.nro": {"name": "imgui-smash", "wifi_safe": True,
         "desc": "Required by SSBU Online Deluxe — in-game overlay",
         "dependency": True},
@@ -1116,6 +1125,331 @@ _NRO_TO_REPO = {
     # The retired plugins deliberately have no source — they are only
     # ever removed, never installed.
 }
+
+# ── Setup types ─────────────────────────────────────────────────────
+# A Setup (gb_setups.json) has a *type*: what the card is for.  The type
+# fixes the plugin set, supplies source rows that differ from the stock
+# ones, and may *host* a gameplay pack (a GameBanana SD-overlay archive).
+# Provision lays down core + plugins only — never the pack: the pack is a
+# mod like any other, added to a profile from the Packs tab and put on the
+# card by Load to SD.  Provision ends by reminding the user to do that
+# (_offer_profile_after_provision), and the Setup check shows whether the
+# pack is on the card / is on a card whose Setup can't run it.
+#
+# Types differ in what they put on the card: Competitive Online takes its
+# whole chain (Smashline included) out of the Online Deluxe package,
+# TR4SH Rebuffed takes Smashline and NRO Hook from their own repos — the
+# same file names from different sources.  Source stamps (read_sd_stamps)
+# record which build Provision put on the card so a type switch (or a
+# changed source row) replaces it; presence alone can't tell them apart.
+#
+#   plugins  selectable plugins of the type; dependencies are added by
+#            expand_plugin_deps (Online Deluxe) or listed here outright
+#   sources  {GITHUB_REPOS key: {repo, ref}} used unless the Setup's own
+#            Sources override the row
+#   pack     key into SETUP_PACKS of the pack this type hosts, or None
+#   deluxe   whether the Online Deluxe config block applies
+SETUP_TYPE_DEFAULT = "Competitive Online"
+SETUP_TYPES = {
+    "Competitive Online": {
+        "desc": "SSBU Online Deluxe — online delay control and low-lag "
+                "render profiles. Wifi-safe; no gameplay changes.",
+        "plugins": [ONLINE_DELUXE_NRO],
+        "sources": {},
+        "pack": None,
+        "deluxe": True,
+    },
+    "TR4SH Rebuffed": {
+        "desc": "Core and plugins for the TR4SH Rebuffed gameplay modpack "
+                "(Smashline, NRO Hook). The pack itself comes from a "
+                "profile: add it in the Packs tab, then Load to SD. "
+                "Changes gameplay — never use on Nintendo's online.",
+        "plugins": ["libnro_hook.nro", "libsmashline_plugin.nro"],
+        # No source rows of its own: TR4SH uses the stock, pinned Smashline
+        # (v1.6.8).  "Smashline 2" in TR4SH's instructions is the *name* of
+        # the HDR-Development/smashline project (the successor of the old
+        # Smashline 1 plugin) — its releases are numbered 1.x.  The repo's
+        # v2.0.0 (2026-10-28) is a different thing: it needs a new "ozone"
+        # dependency and breaks mods built against 1.x, and TR4SH 1.46
+        # (2026-10-02) is one of those.  An earlier version of this type
+        # pinned `latest`, installed v2.0.0, and the game closed with an
+        # error at boot.
+        "sources": {},
+        "pack": "tr4sh_rebuffed",
+        "deluxe": False,
+    },
+    "Skins Only": {
+        "desc": "Just ARCropolis for loading skins, stages and music — no "
+                "extra plugins.",
+        "plugins": [],
+        "sources": {},
+        "pack": None,
+        "deluxe": False,
+    },
+}
+
+# Packs a Setup type can host.  ``gamebanana_id`` is the mod id a profile
+# entry carries; ``marker`` (relative to ultimate/mods) is the file whose
+# presence means the pack is on the card; ``plugins`` are .nro files the
+# archive's atmosphere/ overlay drops into skyline/plugins (kept by a
+# hosting Setup, removed by any other); ``atmosphere_extras`` are paths
+# under atmosphere/contents/<SSBU id>/ the overlay creates, deleted again
+# when a profile sync takes the pack off the card.
+SETUP_PACKS = {
+    "tr4sh_rebuffed": {
+        "name": "TR4SH Rebuffed",
+        "gamebanana_id": 372158,
+        "marker": os.path.join("TR4SH Rebuffed", "plugin.nro"),
+        "plugins": ["libcss_preserve.nro"],
+        "atmosphere_extras": ["manual_html"],
+        # Shipped by TR4SH ≤ 1.45 and declared broken on Smash 13.0.5 by
+        # its authors ("delete them") — removed whenever the pack is
+        # (re)installed or removed, and by any Provision.
+        "retired_plugins": ["stage_75m_lift_only.nro",
+                            "stage_animal_village_ashiba_always.nro"],
+    },
+}
+
+
+def setup_type(setup):
+    """The type of a stored Setup.  Setups saved before types existed
+    carry only ``plugins``: Online Deluxe ticked means Competitive
+    Online, anything else Skins Only (those were the only two outcomes
+    the old checkbox could produce)."""
+    setup = setup or {}
+    t = setup.get("type")
+    if t in SETUP_TYPES:
+        return t
+    raw = setup.get("plugins")
+    if raw is None:
+        return SETUP_TYPE_DEFAULT
+    return ("Competitive Online"
+            if ONLINE_DELUXE_NRO in migrate_retired_plugins(raw)
+            else "Skins Only")
+
+
+def setup_type_plugins(type_name):
+    """Every plugin a Setup of this type puts on the card through the
+    plugin installer (dependencies expanded; pack-shipped plugins are
+    *not* included — see setup_pack_plugins)."""
+    spec = SETUP_TYPES.get(type_name) or SETUP_TYPES[SETUP_TYPE_DEFAULT]
+    return expand_plugin_deps(list(spec["plugins"]))
+
+
+def setup_pack_plugins(pack_key):
+    """.nro files a pack's archive lays down itself."""
+    return list((SETUP_PACKS.get(pack_key) or {}).get("plugins", []))
+
+
+def strip_type_sources(sources, type_name):
+    """Drop the rows a type supplies from a sources dict, leaving only
+    what the user overrode.  Used when saving, so a type's rows are never
+    baked into the Setup and left behind by a later type change."""
+    spec = (SETUP_TYPES.get(type_name) or {}).get("sources", {})
+    return {k: v for k, v in (sources or {}).items()
+            if not (k in spec and spec[k].get("repo") == v.get("repo")
+                    and spec[k].get("ref") == v.get("ref"))}
+
+
+# ── Source stamps ──
+# <SD>/ultimate/.smash_night.json records which repo @ ref Provision took
+# each stamped component from: {"sources": {name: {repo, ref, version}}}.
+# Names are plugin file names plus "skyline".  A component whose stamp
+# differs from what the active Setup wants is reinstalled on Provision —
+# presence alone can't tell Smashline 1 from Smashline 2.
+def _sd_stamp_path():
+    return os.path.join(SD_CARD, "ultimate", ".smash_night.json")
+
+
+def _read_sd_record():
+    """The whole <SD>/ultimate/.smash_night.json, or {}."""
+    try:
+        with open(_sd_stamp_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_sd_record(data):
+    os.makedirs(os.path.dirname(_sd_stamp_path()), exist_ok=True)
+    with open(_sd_stamp_path(), "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+
+def read_sd_stamps():
+    src = _read_sd_record().get("sources")
+    return src if isinstance(src, dict) else {}
+
+
+def write_sd_provisioned(setup_name, type_name):
+    """Record on the card which Setup Provision laid down.  The Setup tab
+    shows its checks only for a card that carries this (or that visibly
+    was provisioned by an older build — see card_provision_state)."""
+    try:
+        data = _read_sd_record()
+        data["provisioned"] = {"setup": setup_name, "type": type_name,
+                               "at": datetime.now().isoformat()}
+        _write_sd_record(data)
+    except Exception as e:
+        print(f"    (could not record the provision on the card: {e})",
+              file=sys.stderr)
+
+
+def card_provision_state():
+    """What the inserted card was provisioned as — ``{"setup": name or
+    None, "type": <SETUP_TYPES key>}`` — or None when nothing has been
+    provisioned (no card, a blank or freshly formatted one).
+
+    There is no "selected" Setup in the app: the Setup tab reflects the
+    card.  A card provisioned before the record existed is recognised by
+    what is on it: Online Deluxe → Competitive Online, Smashline without
+    it → TR4SH Rebuffed, ARCropolis alone → Skins Only."""
+    if not os.path.isdir(SD_CARD) or not os.path.isdir(PLUGINS_DIR):
+        return None
+    rec = _read_sd_record().get("provisioned")
+    if isinstance(rec, dict) and rec.get("type") in SETUP_TYPES:
+        return {"setup": rec.get("setup"), "type": rec["type"]}
+
+    def _has(nro):
+        return os.path.exists(os.path.join(PLUGINS_DIR, nro))
+    if _has(ONLINE_DELUXE_NRO):
+        return {"setup": None, "type": "Competitive Online"}
+    if _has("libsmashline_plugin.nro"):
+        return {"setup": None, "type": "TR4SH Rebuffed"}
+    if _has("libarcropolis.nro"):
+        return {"setup": None, "type": "Skins Only"}
+    return None
+
+
+def write_sd_stamp(name, repo, ref, version=None):
+    """Record (or with repo=None, forget) where *name* came from."""
+    try:
+        stamps = read_sd_stamps()
+        if repo is None:
+            if name not in stamps:
+                return
+            stamps.pop(name, None)
+        else:
+            stamps[name] = {"repo": repo, "ref": ref,
+                            "version": str(version or "")}
+        data = _read_sd_record()          # keep the other keys
+        data["sources"] = stamps
+        _write_sd_record(data)
+    except Exception as e:
+        print(f"    (could not update source stamp for {name}: {e})",
+              file=sys.stderr)
+
+
+def stamp_mismatch(name, want_repo, want_ref, stock_repo, stock_ref):
+    """None when the card's copy of *name* can be taken as the one the
+    Setup wants, else a short reason.  Without a stamp (a card provisioned
+    before stamps existed, or a file copied by hand) the copy is assumed
+    to be the stock source, so it only mismatches when the Setup wants
+    something else."""
+    st = read_sd_stamps().get(name)
+    if st:
+        if (st.get("repo"), st.get("ref")) == (want_repo, want_ref):
+            return None
+        return (f"from {st.get('repo')} @ {st.get('ref')} — this "
+                f"{SETUP_NOUN.lower()} uses {want_repo} @ {want_ref}")
+    if (want_repo, want_ref) == (stock_repo, stock_ref):
+        return None
+    return (f"version unknown — this {SETUP_NOUN.lower()} uses "
+            f"{want_repo} @ {want_ref}")
+
+
+def setup_pack_folders(pack_key):
+    """Mod folders under ultimate/mods that belong to a hosted pack: every
+    folder a profile install deployed for it (its GameBanana ``mod_id`` in
+    their .gb_meta.json — an overlay pack spans several folders) plus the
+    folder holding the pack's marker file (a hand-copied install)."""
+    out = []
+    pack = SETUP_PACKS.get(pack_key) or {}
+    if not os.path.isdir(ARCROPOLIS_MODS):
+        return out
+    want_id = str(pack.get("gamebanana_id"))
+    for entry in sorted(os.listdir(ARCROPOLIS_MODS)):
+        full = os.path.join(ARCROPOLIS_MODS, entry)
+        if not os.path.isdir(full):
+            continue
+        try:
+            with open(os.path.join(full, ".gb_meta.json"), "r",
+                      encoding="utf-8") as f:
+                if str((json.load(f) or {}).get("mod_id")) == want_id:
+                    out.append(entry)
+                    continue
+        except Exception:
+            pass
+    marker = pack.get("marker")
+    if marker:
+        top = marker.replace("\\", "/").split("/")[0]
+        if top not in out and os.path.exists(
+                os.path.join(ARCROPOLIS_MODS, marker)):
+            out.append(top)
+    return out
+
+
+def setup_pack_installed(pack_key):
+    marker = (SETUP_PACKS.get(pack_key) or {}).get("marker")
+    return bool(marker) and os.path.exists(
+        os.path.join(ARCROPOLIS_MODS, marker))
+
+
+def cached_archive_name(mod_id):
+    """File name of the archive cached for a mod (it carries the version
+    for packs — tr4sh_rebuffed_146_essentials.zip), or None."""
+    d = os.path.join(MOD_CACHE_DIR, str(mod_id), "archive")
+    try:
+        for f in sorted(os.listdir(d)):
+            if os.path.isfile(os.path.join(d, f)) and not f.endswith(".part"):
+                return f
+    except OSError:
+        pass
+    return None
+
+
+def overlay_plugin_files_on_card():
+    """Base names of the files that overlay installs on the card recorded
+    as theirs (``overlay_files`` in a mod folder's .gb_meta.json) — the
+    plugins a pack laid into skyline/plugins belong to that pack, not to
+    the Setup, and must not be flagged as strays."""
+    out = set()
+    if not os.path.isdir(ARCROPOLIS_MODS):
+        return out
+    for entry in os.listdir(ARCROPOLIS_MODS):
+        try:
+            with open(os.path.join(ARCROPOLIS_MODS, entry, ".gb_meta.json"),
+                      "r", encoding="utf-8") as f:
+                for rel in (json.load(f) or {}).get("overlay_files") or []:
+                    out.add(os.path.basename(rel).lower())
+        except Exception:
+            continue
+    return out
+
+
+def profiles_with_pack(pack_key):
+    """Names of the mod profiles that carry a hosted pack (enabled)."""
+    want_id = str((SETUP_PACKS.get(pack_key) or {}).get("gamebanana_id"))
+    out = []
+    try:
+        for name, pdata in sorted(load_profiles().items()):
+            for m in (pdata or {}).get("mods", []):
+                if str(m.get("mod_id")) == want_id and m.get("enabled", True):
+                    out.append(name)
+                    break
+    except Exception:
+        pass
+    return out
+
+
+def setup_type_hosting(pack_key):
+    """Name of the Setup type that hosts a pack (for messages)."""
+    for name, spec in SETUP_TYPES.items():
+        if spec.get("pack") == pack_key:
+            return name
+    return None
+
 
 SSBU_GAME_ID = 6498
 SKINS_ROOT_CAT = 3330  # "Skins" root category for SSBU
@@ -4927,6 +5261,33 @@ def _strip_broken_skel_pattern(mod_path):
     return stripped
 
 
+def _count_mod_files(folder):
+    """Files under a mod folder, not counting our own .gb_meta.json."""
+    n = 0
+    for _r, _d, files in os.walk(folder):
+        n += sum(1 for f in files if f != ".gb_meta.json")
+    return n
+
+
+def _copytree_progress(src, dst, every=150):
+    """shutil.copytree with a line of progress every *every* files — a
+    pack's main folder is 1,300 files and takes minutes on an SD card,
+    during which a silent log looks exactly like a hang.  Returns the
+    number of files copied."""
+    total = _count_mod_files(src)
+    done = 0
+    for root, dirs, files in os.walk(src):
+        rel = os.path.relpath(root, src)
+        out = dst if rel == "." else os.path.join(dst, rel)
+        os.makedirs(out, exist_ok=True)
+        for f in files:
+            shutil.copy2(os.path.join(root, f), os.path.join(out, f))
+            done += 1
+            if done % every == 0 and done < total:
+                print(f"      … {done:,} / {total:,} files")
+    return done
+
+
 def _find_overlay_root(folder):
     """Return the directory whose direct children include ``atmosphere/``
     and/or ``ultimate/mods/``, or None. Walks one level deep so a single
@@ -4972,14 +5333,22 @@ def _install_sd_overlay(overlay_root, mod_name, metadata=None,
     overlay_atmo = os.path.join(overlay_root, "atmosphere")
     overlay_ult_mods = os.path.join(overlay_root, "ultimate", "mods")
     deployed = []
+    deployed_info = []          # (dest, sub-mod name, file count)
 
     # 1. atmosphere/ → <SD>/atmosphere/.  Merge: leave existing
     #    plugins (libarcropolis.nro, libssbu_online_deluxe.nro, …) alone, only
     #    add or update files this archive ships.
+    overlay_files = []   # SD-relative paths this archive lays outside mods/
     if os.path.isdir(overlay_atmo):
         atmo_dest = os.path.join(SD_CARD, "atmosphere")
         print(f"  Merging atmosphere/ overlay into {atmo_dest}")
         shutil.copytree(overlay_atmo, atmo_dest, dirs_exist_ok=True)
+        for _r, _d, _fs in os.walk(overlay_atmo):
+            for _f in _fs:
+                overlay_files.append(os.path.join(
+                    "atmosphere", os.path.relpath(os.path.join(_r, _f),
+                                                  overlay_atmo)
+                ).replace("\\", "/"))
 
     # 2. Each ultimate/mods/<sub>/ becomes its own mod folder under
     #    <SD>/ultimate/mods/.  Apply install-time hygiene per sub-mod
@@ -5022,21 +5391,36 @@ def _install_sd_overlay(overlay_root, mod_name, metadata=None,
             if os.path.isdir(dest):
                 print(f"  Replacing existing '{sub}'…")
                 shutil.rmtree(dest)
-            print(f"  Deploying sub-mod: {sub}")
-            shutil.copytree(sub_path, dest)
-
-            if metadata:
-                meta = dict(metadata)
-                meta["sub_mod"] = sub
-                meta["overlay_parent"] = mod_name
-                try:
-                    with open(os.path.join(dest, ".gb_meta.json"), "w",
-                              encoding="utf-8") as f:
-                        json.dump(meta, f, indent=2, ensure_ascii=False)
-                except Exception:
-                    pass
-
+            n_files = _count_mod_files(sub_path)
+            print(f"  Deploying sub-mod: {sub}  ({n_files:,} files)")
+            _copytree_progress(sub_path, dest)
             deployed.append(dest)
+            deployed_info.append((dest, sub, n_files))
+
+    # The .gb_meta.json files are written only now, once *every* sub-mod
+    # is on the card.  They are what marks the pack as installed, so an
+    # install that was interrupted half-way (card pulled, app closed
+    # during the long copy) leaves untracked folders that the next sync
+    # simply overwrites — never a half pack that reads as complete.
+    if metadata:
+        subs = [sub for _d, sub, _n in deployed_info]
+        for dest, sub, n_files in deployed_info:
+            meta = dict(metadata)
+            meta["sub_mod"] = sub
+            meta["overlay_parent"] = mod_name
+            # Recorded so removing the pack also removes the plugins and
+            # other files it laid outside ultimate/mods — a stale plugin
+            # from an old pack version crashes the game.
+            meta["overlay_files"] = overlay_files
+            # …and so the sync can tell a complete pack from a partial one
+            meta["overlay_subs"] = subs
+            meta["files"] = n_files
+            try:
+                with open(os.path.join(dest, ".gb_meta.json"), "w",
+                          encoding="utf-8") as f:
+                    json.dump(meta, f, indent=2, ensure_ascii=False)
+            except Exception:
+                pass
 
     if any(os.path.isfile(os.path.join(d, "plugin.nro")) for d in deployed):
         print("  Note: this archive ships per-mod plugin.nro files. "
@@ -8174,7 +8558,15 @@ def setup_config(setup):
     setup = setup or {}
     cfg = profile_config(setup)
     cfg.pop("wifi_safe", None)
+    # The type decides the plugin set and may own a pack; its source rows
+    # apply unless the Setup's own Sources override them.
+    stype = setup_type(setup)
+    cfg["type"] = stype
+    cfg["pack"] = SETUP_TYPES[stype]["pack"]
+    cfg["plugins"] = setup_type_plugins(stype)
     sources = normalize_sources(setup.get("sources"))
+    for _k, _v in SETUP_TYPES[stype]["sources"].items():
+        sources.setdefault(_k, dict(_v))
     # Legacy switches (Setups / profiles saved before Sources existed)
     # translate into source rows so nothing silently flips back on.
     # (The old nightly_arcropolis flag is ignored: ARCropolis is always
@@ -8208,8 +8600,10 @@ def _default_setup_data(created=None):
     return {
         "created": created or datetime.now().isoformat(),
         "template": "Custom",
+        "type": SETUP_TYPE_DEFAULT,
         "deluxe_config": dict(DELUXE_CONFIG_DEFAULTS),
-        "plugins": selectable_plugins(),
+        # Kept for builds that predate Setup types (they read only this).
+        "plugins": list(SETUP_TYPES[SETUP_TYPE_DEFAULT]["plugins"]),
     }
 
 
@@ -9114,6 +9508,1220 @@ def uninstall_skin(name):
 #  TEXT REDIRECTOR
 # ─────────────────────────────────────────────────────────
 
+class BusyPhysics:
+    """A small physics toy played *over the Log* while a long job runs
+    (Load to SD, Provision, Update ALL…), so a quiet stretch — copying a
+    half-gigabyte pack to the card prints nothing for minutes — doesn't
+    look like the app has stopped.  Balls fall, collide and throw sparks
+    under a gravity that slowly sways, right on top of the log text (the
+    user asked for them to get in the way); they can be grabbed and flung
+    with the mouse, and a double-click on one sends out a shockwave.  A
+    one-line header above the Log shows the job and its elapsed time.
+
+    The balls live on a borderless, owned Toplevel laid exactly over the
+    Log widget whose background is a colour key Windows treats as
+    transparent (``-transparentcolor``): only the balls are drawn, and
+    everywhere else clicks and the mouse wheel fall through to the Log,
+    which stays readable and scrollable underneath.
+
+    Everything runs on the Tk thread from ``after`` callbacks; the job
+    itself is on a worker thread.  Purely decorative: any error in here
+    stops the animation, never the job."""
+
+    KEY = "#010203"           # the overlay's transparent colour key
+    GRAVITY = 1100.0          # px / s²
+    # Gravity used to sway ±35° so the pile kept sloshing; the user asked
+    # why the balls "move so much on their own", so it now points straight
+    # down and the balls settle — they move when something hits them.
+    SWAY = 0.0                # radians of gravity sway (0.61 was the slosh)
+    AIR = 0.25                # 1/s — air drag on the balls
+    REST = 45.0               # px/s — slower contacts than this don't bounce
+    WALL_E = 0.80             # restitution against the walls
+    BALL_E = 0.92             # restitution ball-to-ball
+    SPARK_SPEED = 300.0       # closing speed that throws sparks
+
+    def __init__(self, parent, before=None, target=None):
+        self.parent = parent
+        self.before = before
+        self.target = target or before      # the widget the balls cover
+        self.overlay = None
+        self.canvas = None
+        self._geom = None
+        self.frame = tk.Frame(parent, bg=T.SURFACE)
+        top = tk.Frame(self.frame, bg=T.SURFACE)
+        top.pack(fill="x", padx=10, pady=(4, 2))
+        self.title_lbl = tk.Label(top, text="", bg=T.SURFACE, fg=T.FG,
+                                  anchor="w", font=(T.FONT, T.SZ_SM, "bold"))
+        self.title_lbl.pack(side="left", fill="x", expand=True)
+        self.time_lbl = tk.Label(top, text="", bg=T.SURFACE, fg=T.OVERLAY,
+                                 font=(T.MONO, T.SZ_SM))
+        self.time_lbl.pack(side="right")
+        self.running = False            # the tick loop is going
+        self.job = False                # the job header is showing
+        self.game = False               # the balls are up (Ball Drop)
+        self.on_game_change = None      # callback(bool) for the button
+        self.t0 = None
+        self.last = self.phase0 = 0.0
+        self._after = None
+        self._hide_after = None
+        self.balls, self.sparks, self.rings = [], [], []
+        self.grabbed = None
+        self.mouse = (0.0, 0.0)
+        self._emblem = None
+        self.bow = None             # the bow being drawn (right button held)
+        self.arrows = []            # arrows in flight or tumbling down
+        self.ground = []            # spent arrows lying on the floor
+        self.smokes = []            # smoke puffs off arrows that hit the emblem
+        self._wh = None             # the Log's size at the last step
+        self.rmouse = (0.0, 0.0)
+        self._snd = None            # {"boink": [paths…], "crack": path}
+        self._snd_last = 0.0
+        self._snd_was_crack = False
+        self._snd_on = (0.0, True)  # (checked at, sounds enabled)
+        # Right-button events for the bow.  The see-through part of the
+        # layer is click-through, so a right-click on "empty space" lands
+        # on the Log — which sits at the same coordinates — hence both
+        # the Log and the canvas (a click that hits a ball) get them.
+        for seq, fn in (("<ButtonPress-3>", self._bow_press),
+                        ("<B3-Motion>", self._bow_drag),
+                        ("<ButtonRelease-3>", self._bow_release)):
+            try:
+                self.target.bind(seq, fn, add="+")
+            except Exception:
+                pass
+
+    # ── colours ──
+    @staticmethod
+    def _mix(c1, c2, k):
+        """Blend two #rrggbb colours (k=0 → c1, k=1 → c2)."""
+        a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
+        b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
+        return "#%02x%02x%02x" % tuple(
+            max(0, min(255, round(x + (y - x) * k))) for x, y in zip(a, b))
+
+    def _palette(self):
+        cols = [getattr(T, n, None) for n in
+                ("ACCENT", "GREEN", "PEACH", "RED", "YELLOW", "MAUVE",
+                 "TEAL", "PINK")]
+        return [c for c in cols if isinstance(c, str) and len(c) == 7] \
+            or ["#89b4fa", "#a6e3a1", "#fab387", "#f38ba8"]
+
+    # ── lifecycle ──
+    # Two independent things share one tick loop:
+    #   • the *job header* — job name + elapsed clock above the Log, shown
+    #     automatically while a long job runs (start / finish / hide);
+    #   • the *game* — the balls over the Log, started and stopped by the
+    #     Ball Drop button next to Clear (start_game / stop_game), whether
+    #     or not a job is running.
+    def _ensure_loop(self):
+        if self.running:
+            return
+        import time as _t
+        self.last = _t.perf_counter()
+        self.running = True
+        self._tick()
+
+    def _maybe_stop_loop(self):
+        if self.job or self.game:
+            return
+        self.running = False
+        try:
+            if self._after:
+                self.frame.after_cancel(self._after)
+        except Exception:
+            pass
+        self._after = None
+
+    def start(self, title, started=None):
+        """A long job began (or is being retitled): show the header.
+        *started* is when the job began (time.time()), for the clock."""
+        try:
+            import time as _t
+            self.title_lbl.configure(text=title, fg=T.FG)
+            if self._hide_after:
+                self.frame.after_cancel(self._hide_after)
+                self._hide_after = None
+            self.t0 = started or _t.time()
+            if not self.job:
+                self.frame.pack(fill="x", before=self.before)
+                self.job = True
+            self._ensure_loop()
+        except Exception:
+            pass
+
+    def finish(self, linger_ms=2500):
+        """The job ended: say so for a moment, then take the header down."""
+        if not self.job:
+            return
+        try:
+            import time as _t
+            self.title_lbl.configure(
+                text="✓ Finished — " + self._clock(_t.time() - (self.t0 or _t.time())),
+                fg=T.GREEN)
+            self.time_lbl.configure(text="")
+            self.t0 = None
+            self._hide_after = self.frame.after(linger_ms, self.hide)
+        except Exception:
+            self.hide()
+
+    def hide(self):
+        """Take the job header down (the game, if on, keeps going)."""
+        self._hide_after = None
+        self.job = False
+        self.t0 = None
+        try:
+            self.frame.pack_forget()
+        except Exception:
+            pass
+        self._maybe_stop_loop()
+
+    def start_game(self):
+        """Ball Drop: put the balls over the Log.  True when they're up."""
+        if self.game:
+            return True
+        try:
+            import time as _t
+            self.phase0 = _t.perf_counter()
+            self._open_overlay()
+            self._spawn()
+            self.game = True
+            self._ensure_loop()
+        except Exception:
+            self.stop_game()
+            return False
+        self._notify()
+        return True
+
+    def stop_game(self):
+        """Stop Ball Drop: take the balls (and the bat) away."""
+        self.game = False
+        self.balls, self.sparks, self.rings = [], [], []
+        self.grabbed = None
+        self.bow = None
+        self._wh = None
+        self.arrows, self.ground, self.smokes = [], [], []
+        try:
+            if self.overlay is not None:
+                self.overlay.destroy()
+        except Exception:
+            pass
+        self.overlay = self.canvas = self._geom = None
+        self._maybe_stop_loop()
+        self._notify()
+
+    def toggle_game(self):
+        if self.game:
+            self.stop_game()
+        else:
+            self.start_game()
+
+    def _notify(self):
+        try:
+            if self.on_game_change:
+                self.on_game_change(self.game)
+        except Exception:
+            pass
+
+    # ── the see-through layer over the Log ──
+    def _open_overlay(self):
+        top = self.target.winfo_toplevel()
+        ov = tk.Toplevel(top)
+        ov.overrideredirect(True)           # no frame, no taskbar button
+        ov.transient(top)                   # stays just above the app
+        ov.configure(bg=self.KEY)
+        ov.attributes("-transparentcolor", self.KEY)
+        self.canvas = tk.Canvas(ov, bg=self.KEY, highlightthickness=0,
+                                cursor="hand2")
+        self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<ButtonPress-1>", self._press)
+        self.canvas.bind("<B1-Motion>", self._drag)
+        self.canvas.bind("<ButtonRelease-1>", self._release)
+        self.canvas.bind("<Double-Button-1>", self._burst)
+        try:
+            ui = max(1.0, min(2.5, float(ov.winfo_fpixels("1i")) / 96.0))
+        except Exception:
+            ui = 1.0
+        self._ui = ui                       # display scaling (1.0 = 100 %)
+        self.ARROW_LEN = BusyPhysics.ARROW_LEN * ui
+        self.BOW_MAX_PULL = BusyPhysics.BOW_MAX_PULL * ui
+        self.BOW_MIN_PULL = BusyPhysics.BOW_MIN_PULL * ui
+        self.canvas.bind("<ButtonPress-3>", self._bow_press)
+        self.canvas.bind("<B3-Motion>", self._bow_drag)
+        self.canvas.bind("<ButtonRelease-3>", self._bow_release)
+        self.overlay = ov
+        self._place()
+        ov.update_idletasks()
+        # Tk ignores ``transient`` for an override-redirect window, which
+        # left the layer *behind* the app as soon as the app was clicked.
+        # Make the app window its owner at the Win32 level: an owned
+        # window always stays directly above its owner (and minimizes
+        # with it) without floating over other programs.
+        try:
+            import ctypes
+            u32 = ctypes.windll.user32
+            u32.SetWindowLongPtrW.restype = ctypes.c_void_p
+            u32.SetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int,
+                                              ctypes.c_void_p]
+            u32.SetWindowLongPtrW(int(ov.wm_frame(), 16), -8,   # GWLP_HWNDPARENT
+                                  int(top.wm_frame(), 16))
+        except Exception:
+            pass
+        ov.lift()
+
+    def _place(self):
+        """Keep the layer exactly over the Log (the window may be moved
+        or resized, the pane's sash dragged); hide it while the app is
+        minimized or the Log isn't on screen."""
+        t = self.target
+        if self.overlay is None:
+            return
+        try:
+            if not t.winfo_viewable():
+                if self._geom != "hidden":
+                    self.overlay.withdraw()
+                    self._geom = "hidden"
+                return
+            g = (t.winfo_width(), t.winfo_height(),
+                 t.winfo_rootx(), t.winfo_rooty())
+            if g != self._geom:
+                if self._geom == "hidden":
+                    self.overlay.deiconify()
+                self.overlay.geometry("%dx%d+%d+%d" % g)
+                self._geom = g
+        except tk.TclError:
+            pass
+
+    @staticmethod
+    def _clock(sec):
+        sec = int(max(0, sec))
+        return f"{sec // 60}:{sec % 60:02d}"
+
+    # ── world ──
+    def _size(self):
+        g = self._geom
+        if isinstance(g, tuple):
+            return max(g[0], 240), max(g[1], 120)
+        return (max(self.canvas.winfo_width(), 240),
+                max(self.canvas.winfo_height(), 120))
+
+    def _spawn(self):
+        import random
+        W, H = self._size()
+        pal = self._palette()
+        random.shuffle(pal)
+        cv = self.canvas
+        cv.delete("all")
+        self.balls = []
+        # Small balls, and more of them on a bigger Log (the user tried
+        # larger ones and preferred these).
+        k = 1.0
+        self._scale = k
+        n = max(9, min(22, int(W * H / 30000)))
+        for i in range(n):
+            r = random.uniform(13, 23) * k
+            b = {"x": W * (i + 0.5) / n + random.uniform(-6, 6),
+                 "y": random.uniform(r, H * 0.45),
+                 "vx": random.uniform(-260, 260),
+                 "vy": random.uniform(-120, 80),
+                 "r": r, "m": r * r, "img": None}
+            col = pal[i % len(pal)]
+            b["body"] = cv.create_oval(0, 0, 0, 0, fill=col,
+                                       outline=self._mix(col, "#000000", 0.35),
+                                       width=max(2, round(1.6 * k)))
+            b["shine"] = cv.create_oval(0, 0, 0, 0, outline="",
+                                        fill=self._mix(col, "#ffffff", 0.55))
+            b["col"] = col
+            self.balls.append(b)
+        # One ball wears the app's own emblem, when the icon is around.
+        try:
+            path = os.path.join(SCRIPT_DIR, "icons8-super-smash-bros-96.png")
+            if not os.path.isfile(path):
+                path = os.path.join(SCRIPT_DIR,
+                                    "icons8-super-smash-bros-48.png")
+            if HAS_PIL and os.path.isfile(path):
+                px = int(round(46 * k))
+                if self._emblem is None or self._emblem.width() != px:
+                    self._emblem = ImageTk.PhotoImage(
+                        Image.open(path).convert("RGBA").resize(
+                            (px, px), Image.LANCZOS))
+                b = self.balls[0]
+                b["r"] = max(self._emblem.width(), self._emblem.height()) / 2.0
+                b["m"] = b["r"] * b["r"]
+                cv.delete(b["shine"])
+                b["shine"] = None
+                cv.itemconfigure(b["body"], fill=T.CRUST, outline=T.SURFACE1)
+                b["img"] = cv.create_image(0, 0, image=self._emblem)
+                b["col"] = "#ffffff"
+        except Exception:
+            pass
+
+    def _spark(self, x, y, col, n=5, speed=260.0):
+        import math, random
+        if len(self.sparks) > 140:
+            return
+        for _ in range(n):
+            a = random.uniform(0, 2 * math.pi)
+            v = random.uniform(0.35, 1.0) * speed
+            life = random.uniform(0.22, 0.42)
+            self.sparks.append({
+                "x": x, "y": y, "vx": math.cos(a) * v, "vy": math.sin(a) * v,
+                "life": life, "max": life, "col": col,
+                "id": self.canvas.create_line(
+                    x, y, x, y, fill=col, capstyle="round",
+                    width=max(2, round(1.5 * getattr(self, "_scale", 1.0))))})
+
+    # ── mouse ──
+    def _press(self, e):
+        self.mouse = (float(e.x), float(e.y))
+        for b in reversed(self.balls):
+            if (e.x - b["x"]) ** 2 + (e.y - b["y"]) ** 2 <= (b["r"] + 4) ** 2:
+                self.grabbed = b
+                return
+
+    def _burst(self, e):
+        """Double-click (on a ball — empty space is click-through): a
+        shockwave from that point pushes everything away."""
+        import math
+        self.grabbed = None
+        for b in self.balls:
+            dx, dy = b["x"] - e.x, b["y"] - e.y
+            d = math.hypot(dx, dy) or 1.0
+            k = max(0.0, 1.0 - d / 320.0) * 950.0
+            b["vx"] += dx / d * k
+            b["vy"] += dy / d * k
+        self.rings.append({"x": e.x, "y": e.y, "r": 6.0, "life": 0.45,
+                           "max": 0.45,
+                           "id": self.canvas.create_oval(
+                               e.x, e.y, e.x, e.y, outline=T.ACCENT, width=2)})
+
+    def _drag(self, e):
+        self.mouse = (float(e.x), float(e.y))
+
+    def _release(self, _e):
+        self.grabbed = None       # keeps the velocity the drag gave it
+
+    # ── boinks ──
+    # Quiet synthesized blips on the harder bounces (pitch by ball size,
+    # a woody "tock" for the bat).  Generated once as tiny WAV files and
+    # played with winsound — asynchronous, one at a time, rate-limited —
+    # so they never pile up or touch the app's MCI clips.  Silent when
+    # "Disable sound effects" is ticked.
+    def _make_sounds(self):
+        import math, random, struct, wave
+        folder = os.path.join(os.environ.get("LOCALAPPDATA")
+                              or tempfile.gettempdir(), "SmashNight")
+        os.makedirs(folder, exist_ok=True)
+        rate = 22050
+
+        def write(name, samples):
+            path = os.path.join(folder, name)
+            with wave.open(path, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(rate)
+                w.writeframes(b"".join(
+                    struct.pack("<h", int(max(-1.0, min(1.0, v)) * 32767))
+                    for v in samples))
+            return path
+
+        boinks = []
+        for i, f0 in enumerate((300.0, 360.0, 430.0, 520.0, 620.0)):
+            n = int(rate * 0.11)
+            out, phase = [], 0.0
+            for k in range(n):
+                t = k / n
+                f = f0 * (1.0 + 0.9 * (1.0 - t) ** 3)     # pitch drops: "boink"
+                phase += 2 * math.pi * f / rate
+                env = min(1.0, k / 40.0) * math.exp(-5.5 * t)
+                out.append(0.13 * env * math.sin(phase))
+            boinks.append(write(f"boink_v2_{i}.wav", out))
+        # The bat's crack: a sharp noise snap, a woody knock and a low
+        # thump — in four loudness steps, picked by how hard the hit was.
+        n = int(rate * 0.13)
+        cracks = []
+        for i, amp in enumerate((0.10, 0.20, 0.36, 0.60)):
+            rnd = random.Random(7)
+            out = []
+            for k in range(n):
+                t = k / n
+                sec = k / rate
+                v = (0.70 * (rnd.random() * 2 - 1) * math.exp(-34.0 * t)
+                     + 0.38 * math.sin(2 * math.pi * 1150.0 * sec)
+                     * math.exp(-13.0 * t)
+                     + 0.42 * math.sin(2 * math.pi * 235.0 * sec)
+                     * math.exp(-8.0 * t))
+                out.append(amp * v)
+            cracks.append(write(f"bat_crack_v3_{i}.wav", out))
+        # The emblem ball's explosion: a low boom with a noisy burst on top.
+        n = int(rate * 0.42)
+        rnd = random.Random(11)
+        boom = []
+        for k in range(n):
+            t = k / n
+            sec = k / rate
+            f = 95.0 - 45.0 * t                        # the thump sinks
+            boom.append(0.62 * (
+                0.75 * math.sin(2 * math.pi * f * sec) * math.exp(-4.0 * t)
+                + 0.45 * (rnd.random() * 2 - 1) * math.exp(-9.0 * t)))
+        # The bowstring: a short falling "twang" with a breath of air.
+        n = int(rate * 0.16)
+        rnd = random.Random(5)
+        twang, phase = [], 0.0
+        for k in range(n):
+            t = k / n
+            phase += 2 * math.pi * (300.0 - 150.0 * t) / rate
+            twang.append(0.26 * (
+                0.7 * math.sin(phase) * math.exp(-7.0 * t)
+                + 0.5 * (rnd.random() * 2 - 1) * math.exp(-11.0 * t)))
+        self._snd = {"boink": boinks, "crack": cracks,
+                     "boom": write("boom_v1.wav", boom),
+                     "twang": write("twang_v1.wav", twang)}
+
+    def _boink(self, radius=18.0, kind="boink", power=0.0):
+        """Play a bounce blip; kind="crack" is an arrow ploughing into a
+        ball, louder with *power* (px/s); "twang" the bowstring; "boom"
+        the emblem ball's explosion."""
+        try:
+            import time as _t
+            now = _t.perf_counter()
+            # A crack is never swallowed by a boink that just played; a
+            # boink waits out both.
+            gap = now - self._snd_last
+            if kind in ("boom", "twang"):
+                pass                                   # always heard
+            elif now < getattr(self, "_snd_hold", 0.0):
+                return                                 # let a boom ring out
+            elif gap < (0.05 if kind == "crack" and not self._snd_was_crack
+                        else 0.09):
+                return
+            if now - self._snd_on[0] > 1.0:
+                self._snd_on = (now, sounds_enabled())
+            if not self._snd_on[1]:
+                return
+            if self._snd is None:
+                self._make_sounds()
+            self._snd_last = now
+            self._snd_was_crack = kind == "crack"
+            import winsound
+            if kind == "boom":
+                path = self._snd["boom"]
+                self._snd_hold = now + 0.38
+            elif kind == "twang":
+                path = self._snd["twang"]
+            elif kind == "crack":
+                levels = self._snd["crack"]
+                # 180 px/s is a tap, ~2000 a full swing
+                i = int(max(0.0, min(0.999, (power - 180.0) / 1800.0))
+                        * len(levels))
+                path = levels[i]
+            else:
+                files = self._snd["boink"]
+                # smaller ball → higher note
+                i = int(max(0.0, min(0.999, (24.0 - radius) / 12.0))
+                        * len(files))
+                path = files[i]
+            winsound.PlaySound(path, winsound.SND_FILENAME
+                               | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+        except Exception:
+            self._snd_on = (float("inf"), False)   # give up quietly
+
+    # ── the bow ──
+    # Hold the right mouse button: a bow appears at that spot and stays
+    # there.  Dragging away from it draws the string back — the arrow
+    # points the opposite way, slingshot-style — and a dotted line shows
+    # the path the arrow will fly.  The further the pull, the faster the
+    # arrow and the flatter its arc.  Releasing looses a flaming arrow.
+    #
+    # An arrow in flight is unstoppable: it ploughs through every ball in
+    # its way, shoving them aside, and keeps its own course exactly — so
+    # the dotted path is where it really goes.  The one thing that stops
+    # it is the emblem ball: that explodes (_explode), and the arrow
+    # bounces off and drops.  An arrow that reaches the floor or a side
+    # wall sticks in it.  Every spent arrow — in a wall, in the floor or
+    # lying on it — is solid: balls land on it, bump over it or are
+    # turned aside (_arrow_perches).  At most MAX_GROUND of them stay
+    # (the oldest is cleared away).
+    ARROW_LEN = 66.0
+    BOW_MAX_PULL = 240.0      # px of draw that counts
+    BOW_MIN_PULL = 16.0       # less than this and nothing is shot
+    ARROW_VMIN = 520.0        # px/s at the lightest draw …
+    ARROW_VMAX = 3400.0       # … and at full draw
+    MAX_GROUND = 10           # spent arrows kept (the oldest is cleared)
+    SMOKE_SECS = 5.0          # how long an arrow that hit the emblem smokes
+    PATH_DOTS = 90
+    WOOD, WOOD_EDGE = "#d9a066", "#7a4e24"
+    FLAMES = ("#fff4b0", "#ffd166", "#ffb347", "#ff7a45", "#ff5c5c")
+
+    def _bow_aim(self):
+        """(nock x, nock y, ux, uy, speed, frac) for the current draw, or
+        None when the string hasn't been pulled far enough to shoot."""
+        import math
+        bow = self.bow
+        px, py = bow["mx"] - bow["ax"], bow["my"] - bow["ay"]
+        pull = math.hypot(px, py)
+        if pull < 1.0:
+            return None
+        ux, uy = -px / pull, -py / pull          # the arrow flies away from the pull
+        pull = min(pull, self.BOW_MAX_PULL)
+        frac = pull / self.BOW_MAX_PULL
+        speed = self.ARROW_VMIN + (self.ARROW_VMAX - self.ARROW_VMIN) * frac ** 1.15
+        nx_, ny_ = bow["ax"] - ux * pull, bow["ay"] - uy * pull
+        return nx_, ny_, ux, uy, speed, frac, pull
+
+    def _bow_press(self, e):
+        """Right button down: plant the bow here."""
+        if not self.game or self.canvas is None:
+            return
+        self._bow_remove()
+        cv = self.canvas
+        ui = getattr(self, "_ui", 1.0)
+        self.bow = {
+            "ax": float(e.x), "ay": float(e.y),
+            "mx": float(e.x), "my": float(e.y),
+            "limb": cv.create_line(0, 0, 0, 0, fill=self.WOOD,
+                                   width=round(5 * ui), smooth=True,
+                                   capstyle="round"),
+            "string": cv.create_line(0, 0, 0, 0, fill="#e8e8f0",
+                                     width=max(1, round(ui))),
+            "shaft": cv.create_line(0, 0, 0, 0, fill=self.WOOD,
+                                    width=round(3 * ui), capstyle="round"),
+            "head": cv.create_polygon(0, 0, 0, 0, 0, 0, fill="#c8ccd8",
+                                      outline="#5a5f70"),
+            "flame": cv.create_oval(0, 0, 0, 0, fill="#ff7a45", outline=""),
+            "core": cv.create_oval(0, 0, 0, 0, fill="#fff4b0", outline=""),
+            "dots": [cv.create_oval(-9, -9, -9, -9, fill="#cdd6f4",
+                                    outline="") for _ in range(self.PATH_DOTS)],
+        }
+        return "break"
+
+    def _bow_drag(self, e):
+        if self.bow:
+            self.bow["mx"], self.bow["my"] = float(e.x), float(e.y)
+
+    def _bow_remove(self, _e=None):
+        if self.bow and self.canvas is not None:
+            cv = self.canvas
+            for key in ("limb", "string", "shaft", "head", "flame", "core"):
+                cv.delete(self.bow[key])
+            for d in self.bow["dots"]:
+                cv.delete(d)
+        self.bow = None
+
+    def _bow_release(self, e=None):
+        """Right button up: loose the arrow (if drawn far enough)."""
+        if not self.bow:
+            return
+        if e is not None:
+            self._bow_drag(e)
+        aim = self._bow_aim()
+        if aim and aim[6] >= self.BOW_MIN_PULL and self.canvas is not None:
+            nx_, ny_, ux, uy, speed, frac, _pull = aim
+            self._arrow_spawn(nx_ + ux * self.ARROW_LEN,
+                              ny_ + uy * self.ARROW_LEN,
+                              ux * speed, uy * speed)
+            self._boink(kind="twang")
+        self._bow_remove()
+        return "break"
+
+    def _arrow_path(self, x, y, vx, vy, W, H):
+        """Points along the flight of an arrow loosed from (x, y) at
+        (vx, vy), one every ~30 px, and whether it meets the emblem ball.
+        Balls don't deflect an arrow, so this *is* its flight: it ends at
+        the floor, a side wall, or the emblem ball."""
+        import math
+        emblem = next((b for b in self.balls if b["img"] is not None), None)
+        pts, hit = [], False
+        g = self.GRAVITY
+        dt = 1.0 / 240.0
+        travelled = 0.0
+        for _ in range(int(4.0 / dt)):
+            vy += g * dt
+            dx, dy = vx * dt, vy * dt
+            x += dx
+            y += dy
+            travelled += math.hypot(dx, dy)
+            if emblem is not None and (x - emblem["x"]) ** 2 \
+                    + (y - emblem["y"]) ** 2 <= (emblem["r"] + 3) ** 2:
+                pts.append((x, y))
+                hit = True
+                break
+            if (y >= H and vy > 0) or (x <= 0 and vx < 0) \
+                    or (x >= W and vx > 0):
+                pts.append((min(max(x, 0.0), W), min(y, H)))
+                break
+            if travelled >= 30.0:
+                travelled = 0.0
+                pts.append((x, y))
+                if len(pts) >= self.PATH_DOTS:
+                    break
+        return pts, hit
+
+    def _bow_draw(self, W, H):
+        import math, random
+        bow = self.bow
+        cv = self.canvas
+        ax, ay = bow["ax"], bow["ay"]
+        aim = self._bow_aim()
+        if aim is None:
+            ux, uy, pull, frac, speed = 0.0, -1.0, 0.0, 0.0, 0.0
+            nx_, ny_ = ax, ay
+        else:
+            nx_, ny_, ux, uy, speed, frac, pull = aim
+        px_, py_ = -uy, ux                         # across the arrow
+        ui = getattr(self, "_ui", 1.0)
+        R = 46.0 * ui                              # half the bow's height
+        bend = (16.0 + 10.0 * frac) * ui           # limbs bend as it's drawn
+        t1 = (ax + px_ * R - ux * bend, ay + py_ * R - uy * bend)
+        t2 = (ax - px_ * R - ux * bend, ay - py_ * R - uy * bend)
+        cv.coords(bow["limb"], t1[0], t1[1], ax + ux * 6, ay + uy * 6,
+                  t2[0], t2[1])
+        cv.coords(bow["string"], t1[0], t1[1], nx_, ny_, t2[0], t2[1])
+        tipx, tipy = nx_ + ux * self.ARROW_LEN, ny_ + uy * self.ARROW_LEN
+        cv.coords(bow["shaft"], nx_, ny_, tipx, tipy)
+        cv.coords(bow["head"], tipx + ux * 9 * ui, tipy + uy * 9 * ui,
+                  tipx + px_ * 5 * ui, tipy + py_ * 5 * ui,
+                  tipx - px_ * 5 * ui, tipy - py_ * 5 * ui)
+        fr = (7.0 + random.uniform(-1.5, 2.0)) * ui
+        fx_, fy_ = tipx + ux * 3, tipy + uy * 3 - 3
+        cv.coords(bow["flame"], fx_ - fr, fy_ - fr * 1.25, fx_ + fr, fy_ + fr)
+        cv.coords(bow["core"], fx_ - fr * 0.5, fy_ - fr * 0.6,
+                  fx_ + fr * 0.5, fy_ + fr * 0.5)
+        if random.random() < 0.5:
+            self._flame(fx_, fy_, 0.0, 0.0)
+        # the expected path
+        pts, hit = ([], False)
+        if aim is not None and pull >= self.BOW_MIN_PULL:
+            pts, hit = self._arrow_path(tipx, tipy, ux * speed, uy * speed,
+                                        W, H)
+        col = "#ffb347" if hit else "#cdd6f4"      # orange: it will hit the emblem
+        for i, d in enumerate(bow["dots"]):
+            if i < len(pts):
+                x, y = pts[i]
+                r = (3.4 if (hit and i == len(pts) - 1) else 2.3) * ui
+                cv.coords(d, x - r, y - r, x + r, y + r)
+                cv.itemconfigure(d, fill=col)
+            else:
+                cv.coords(d, -9, -9, -9, -9)
+
+    # ── arrows ──
+    def _flame(self, x, y, vx, vy):
+        """One lick of flame: a short-lived spark that drifts upward."""
+        import random
+        if len(self.sparks) > 150:
+            return
+        life = random.uniform(0.18, 0.36)
+        col = random.choice(self.FLAMES)
+        self.sparks.append({
+            "x": x, "y": y,
+            "vx": vx + random.uniform(-70, 70),
+            "vy": vy + random.uniform(-190, -40),
+            "life": life, "max": life, "col": col, "lift": True,
+            "id": self.canvas.create_line(x, y, x, y, fill=col, width=3,
+                                          capstyle="round")})
+
+    def _smoke(self, x, y):
+        """One puff of smoke: a grey disc that rises, drifts, swells and
+        fades into the Log's background."""
+        import random
+        if len(self.smokes) > 90:
+            return
+        ui = getattr(self, "_ui", 1.0)
+        life = random.uniform(1.1, 2.1)
+        shade = random.choice(("#9a9fb5", "#858aa0", "#a8adc0", "#73788c"))
+        self.smokes.append({
+            "x": x, "y": y, "vx": random.uniform(-16, 16),
+            "vy": random.uniform(-75, -38), "r": random.uniform(2.5, 4.5) * ui,
+            "grow": random.uniform(7, 13) * ui, "life": life, "max": life,
+            "col": shade, "sway": random.uniform(0, 6.28),
+            "id": self.canvas.create_oval(x, y, x, y, fill=shade, outline="")})
+
+    def _arrow_spawn(self, x, y, vx, vy):
+        cv = self.canvas
+        ui = getattr(self, "_ui", 1.0)
+        self.arrows.append({
+            "state": "fly", "x": x, "y": y, "vx": vx, "vy": vy,
+            "ang": 0.0, "w": 0.0, "hit": set(),
+            "shaft": cv.create_line(0, 0, 0, 0, fill=self.WOOD,
+                                    width=round(3 * ui), capstyle="round"),
+            "head": cv.create_polygon(0, 0, 0, 0, 0, 0, fill="#c8ccd8",
+                                      outline="#5a5f70"),
+            "f1": cv.create_line(0, 0, 0, 0, fill="#ff5c5c",
+                                 width=round(2 * ui)),
+            "f2": cv.create_line(0, 0, 0, 0, fill="#ff5c5c",
+                                 width=round(2 * ui)),
+            "flame": cv.create_oval(0, 0, 0, 0, fill="#ff7a45", outline=""),
+            "core": cv.create_oval(0, 0, 0, 0, fill="#fff4b0", outline="")})
+
+    def _arrow_delete(self, ar):
+        if self.canvas is not None:
+            for key in ("shaft", "head", "f1", "f2", "flame", "core"):
+                if ar.get(key):
+                    self.canvas.delete(ar[key])
+
+    def _arrow_ground(self, ar):
+        """The arrow is spent: douse it and leave it on the floor; keep at
+        most MAX_GROUND lying around."""
+        import math
+        ar["state"] = "ground"
+        ar["solid"] = True
+        L = self.ARROW_LEN
+        ux, uy = math.cos(ar["ang"]), math.sin(ar["ang"])
+        # (tail x, tail y, unit x, unit y) — it never moves again
+        ar["seg"] = (ar["x"] - ux * L / 2, ar["y"] - uy * L / 2, ux, uy)
+        if ar.get("struck"):
+            import time as _t
+            ar["smoke_until"] = _t.perf_counter() + self.SMOKE_SECS
+        for key in ("flame", "core"):
+            if ar.get(key) and self.canvas is not None:
+                self.canvas.delete(ar[key])
+            ar[key] = None
+        if ar in self.arrows:
+            self.arrows.remove(ar)
+        self.ground.append(ar)
+        while len(self.ground) > self.MAX_GROUND:
+            self._arrow_delete(self.ground.pop(0))
+
+    def _arrow_drop(self, ar, vx, vy):
+        """Knocked out of its flight: from here it just tumbles down."""
+        import math, random
+        ux, uy = math.cos(ar["ang"]), math.sin(ar["ang"])
+        ar["state"] = "fall"
+        # keep track of the middle of the shaft from now on
+        ar["x"] -= ux * self.ARROW_LEN / 2
+        ar["y"] -= uy * self.ARROW_LEN / 2
+        ar["vx"], ar["vy"] = vx, vy
+        ar["w"] = random.choice((-1, 1)) * random.uniform(5.0, 11.0)
+
+    def _arrows_step(self, h, gy, W, H):
+        import math
+        L = self.ARROW_LEN
+        for ar in self.arrows[:]:
+            if ar["state"] == "fall":
+                ar["vy"] += gy * h
+                ar["x"] += ar["vx"] * h
+                ar["y"] += ar["vy"] * h
+                ar["ang"] += ar["w"] * h
+                if ar["x"] < L / 2 or ar["x"] > W - L / 2:
+                    ar["x"] = min(max(ar["x"], L / 2), W - L / 2)
+                    ar["vx"] *= -0.3
+                if ar["y"] >= H - 3:               # lands flat
+                    ar["y"] = H - 3
+                    ar["ang"] = 0.0 if math.cos(ar["ang"]) >= 0 else math.pi
+                    ar["anchor"] = "floor"
+                    self._arrow_ground(ar)
+                continue
+            # in flight: (x, y) is the tip; nothing alters its course
+            ar["vy"] += gy * h
+            ar["x"] += ar["vx"] * h
+            ar["y"] += ar["vy"] * h
+            speed = math.hypot(ar["vx"], ar["vy"]) or 1.0
+            ux, uy = ar["vx"] / speed, ar["vy"] / speed
+            ar["ang"] = math.atan2(uy, ux)
+            tx, ty = ar["x"], ar["y"]
+            stopped = False
+            for b in self.balls:
+                # closest point of the shaft (tip → tail) to the ball
+                rx, ry = b["x"] - tx, b["y"] - ty
+                t = max(0.0, min(L, -(rx * ux + ry * uy)))
+                qx, qy = tx - ux * t, ty - uy * t
+                dx, dy = b["x"] - qx, b["y"] - qy
+                rr = b["r"] + 2.5
+                d2 = dx * dx + dy * dy
+                if d2 >= rr * rr:
+                    continue
+                if b["img"] is not None:
+                    # the emblem ball: the one thing that stops an arrow
+                    self._explode(b, max(0.6, min(1.5, speed / 2200.0)))
+                    ar["struck"] = True            # it will smoke where it lands
+                    self._arrow_drop(ar, -ux * speed * 0.22,
+                                     -uy * speed * 0.22 - 160.0)
+                    stopped = True
+                    break
+                if b is self.grabbed:
+                    continue
+                # any other ball is ploughed aside; the arrow doesn't notice
+                d = math.sqrt(d2)
+                if d < 1e-6:
+                    nx_, ny_, d = -uy, ux, 0.0
+                else:
+                    nx_, ny_ = dx / d, dy / d
+                b["x"] += nx_ * (rr - d)
+                b["y"] += ny_ * (rr - d)
+                closing = (ar["vx"] - b["vx"]) * nx_ + (ar["vy"] - b["vy"]) * ny_
+                if closing > 0:
+                    b["vx"] += nx_ * closing * 1.5
+                    b["vy"] += ny_ * closing * 1.5
+                if id(b) not in ar["hit"]:
+                    ar["hit"].add(id(b))
+                    b["vx"] += ux * speed * 0.35   # and shoved along its way
+                    b["vy"] += uy * speed * 0.35
+                    self._boink(kind="crack", power=speed * 0.6)
+                    self._spark(qx, qy, self._mix("#ffb347", b["col"], 0.4),
+                                5, min(620.0, speed * 0.3))
+                sp = math.hypot(b["vx"], b["vy"])
+                if sp > 4600.0:
+                    b["vx"] *= 4600.0 / sp
+                    b["vy"] *= 4600.0 / sp
+            if stopped:
+                continue
+            if ty >= H and ar["vy"] > 0:           # sticks in the floor
+                ar["y"] = H
+                ar["x"] -= ux * L / 2              # → middle of the shaft
+                ar["y"] -= uy * L / 2
+                ar["anchor"] = "floor"
+                self._boink(kind="crack", power=500.0)
+                self._arrow_ground(ar)
+            elif (tx <= 0 and ar["vx"] < 0) or (tx >= W and ar["vx"] > 0):
+                # sticks in the side wall, head buried, at the angle it
+                # arrived — and from now on it is a solid perch: balls
+                # land on it and roll off, they don't pass through
+                # (_arrow_perches)
+                bury = 6.0 * getattr(self, "_ui", 1.0)
+                ar["anchor"] = "left" if tx <= 0 else "right"
+                ar["x"] = (-bury if tx <= 0 else W + bury)
+                ar["x"] -= ux * L / 2              # → middle of the shaft
+                ar["y"] -= uy * L / 2
+                self._boink(kind="crack", power=500.0)
+                self._arrow_ground(ar)
+
+    def _resized(self, dW, dH, W, H):
+        """The Log changed size (window resized, sash dragged).  A spent
+        arrow belongs to the wall or floor it is stuck in: one in the
+        right wall moves with that wall, one in or on the floor moves
+        with the floor — otherwise shrinking the window left them hanging
+        in mid-air.  Anything that would end up outside is pulled back in."""
+        import math
+        L = self.ARROW_LEN
+        for ar in self.ground:
+            anchor = ar.get("anchor", "floor")
+            if anchor == "right":
+                ar["x"] += dW
+            elif anchor == "floor":
+                ar["y"] += dH
+            ux, uy = math.cos(ar["ang"]), math.sin(ar["ang"])
+            if anchor == "floor":
+                # keep it within the side walls
+                ar["x"] = min(max(ar["x"], L / 2), max(L / 2, W - L / 2))
+            else:
+                # a wall arrow can't hang below the floor
+                low = ar["y"] + abs(uy) * L / 2
+                if low > H - 2:
+                    ar["y"] -= low - (H - 2)
+            ar["seg"] = (ar["x"] - ux * L / 2, ar["y"] - uy * L / 2, ux, uy)
+            ar["drawn"] = None                  # redraw at the new place
+
+    def _arrow_perches(self, balls):
+        """Spent arrows are solid — stuck in a wall, stuck in the floor or
+        lying on it: keep every ball out of their shafts.  A ball that
+        meets one lands on it, bumps over it or is turned aside (a soft
+        bounce); nothing passes through."""
+        import math
+        L = self.ARROW_LEN
+        half = 2.5 * getattr(self, "_ui", 1.0)
+        reach = L / 2 + half
+        for ar in self.ground:
+            seg = ar.get("seg")
+            if seg is None:
+                continue
+            ax, ay, ux, uy = seg
+            cx, cy = ar["x"], ar["y"]
+            for b in balls:
+                r = b["r"]
+                # cheap reject: nowhere near this arrow
+                if abs(b["x"] - cx) > reach + r or abs(b["y"] - cy) > reach + r:
+                    continue
+                if b is self.grabbed:
+                    continue
+                t = max(0.0, min(L, (b["x"] - ax) * ux + (b["y"] - ay) * uy))
+                qx, qy = ax + ux * t, ay + uy * t
+                dx, dy = b["x"] - qx, b["y"] - qy
+                rr = r + half
+                d2 = dx * dx + dy * dy
+                if d2 >= rr * rr:
+                    continue
+                if d2 < 1e-9:                      # dead centre: lift it out
+                    nx_, ny_, d = 0.0, -1.0, 0.0
+                else:
+                    d = math.sqrt(d2)
+                    nx_, ny_ = dx / d, dy / d
+                b["x"] += nx_ * (rr - d)
+                b["y"] += ny_ * (rr - d)
+                vn = b["vx"] * nx_ + b["vy"] * ny_
+                if vn < 0:
+                    e_ = 0.3 if -vn > self.REST else 0.0
+                    b["vx"] -= (1 + e_) * vn * nx_
+                    b["vy"] -= (1 + e_) * vn * ny_
+                    if -vn > 330.0:
+                        self._boink(r)
+
+    def _arrows_draw(self):
+        import math, random, time as _t
+        cv = self.canvas
+        L = self.ARROW_LEN
+        ui = getattr(self, "_ui", 1.0)
+        for ar in self.arrows + self.ground:
+            grounded = ar["state"] == "ground"
+            if grounded and ar.get("drawn"):
+                # a spent arrow never moves: drawn once, only its smoke
+                # needs attention (there can be fifty of them)
+                tx, ty, ux, uy = ar["drawn"]
+            else:
+                ux, uy = math.cos(ar["ang"]), math.sin(ar["ang"])
+                if ar["state"] == "fly":
+                    tx, ty = ar["x"], ar["y"]
+                else:
+                    tx, ty = ar["x"] + ux * L / 2, ar["y"] + uy * L / 2
+                bx, by = tx - ux * L, ty - uy * L      # the tail
+                px_, py_ = -uy, ux
+                cv.coords(ar["shaft"], bx, by, tx, ty)
+                cv.coords(ar["head"], tx + ux * 9 * ui, ty + uy * 9 * ui,
+                          tx + px_ * 5 * ui, ty + py_ * 5 * ui,
+                          tx - px_ * 5 * ui, ty - py_ * 5 * ui)
+                cv.coords(ar["f1"], bx, by, bx - (ux * 3 - px_ * 6) * ui,
+                          by - (uy * 3 - py_ * 6) * ui)
+                cv.coords(ar["f2"], bx, by, bx - (ux * 3 + px_ * 6) * ui,
+                          by - (uy * 3 + py_ * 6) * ui)
+                if grounded:
+                    ar["drawn"] = (tx, ty, ux, uy)
+            if ar.get("smoke_until"):
+                left = ar["smoke_until"] - _t.perf_counter()
+                if left <= 0:
+                    ar["smoke_until"] = None
+                # thick at first, thinning out over the five seconds
+                elif random.random() < 0.10 + 0.22 * left / self.SMOKE_SECS:
+                    self._smoke(tx - ux * random.uniform(0, L * 0.5),
+                                ty - uy * random.uniform(0, L * 0.5) - 2)
+            if ar["flame"]:
+                fr = (8.0 + random.uniform(-2.0, 2.5)) * ui
+                fx_, fy_ = tx - ux * 2, ty - uy * 2 - 2
+                cv.coords(ar["flame"], fx_ - fr, fy_ - fr * 1.2,
+                          fx_ + fr, fy_ + fr)
+                cv.coords(ar["core"], fx_ - fr * 0.5, fy_ - fr * 0.6,
+                          fx_ + fr * 0.5, fy_ + fr * 0.5)
+                # a trail of flame behind the head
+                self._flame(tx - ux * random.uniform(0, 18),
+                            ty - uy * random.uniform(0, 18),
+                            -ar["vx"] * 0.06, -ar["vy"] * 0.06)
+                if ar["state"] == "fly":
+                    self._flame(tx - ux * random.uniform(8, 40),
+                                ty - uy * random.uniform(8, 40),
+                                -ar["vx"] * 0.04, -ar["vy"] * 0.04)
+
+    def _explode(self, src, power=1.0):
+        """An arrow struck the emblem ball: a burst of rings and sparks
+        around it, a boom, and every other ball is thrown hard away from
+        it.  *power* (≈0.6 for a soft shot … 1.5 at full draw) scales the
+        throw."""
+        import math, time as _t
+        now = _t.perf_counter()
+        if now - getattr(self, "_boom_at", 0.0) < 0.35:
+            return
+        self._boom_at = now
+        x, y = src["x"], src["y"]
+        for b in self.balls:
+            if b is src or b is self.grabbed:
+                continue
+            dx, dy = b["x"] - x, b["y"] - y
+            d = math.hypot(dx, dy) or 1.0
+            push = power * (900.0 + 2600.0 * max(0.0, 1.0 - d / 900.0))
+            b["vx"] += dx / d * push
+            b["vy"] += dy / d * push - 250.0          # and a little lift
+            sp = math.hypot(b["vx"], b["vy"])
+            if sp > 4600.0:
+                b["vx"] *= 4600.0 / sp
+                b["vy"] *= 4600.0 / sp
+        cv = self.canvas
+        # the aura: three rings racing outward, hot core first
+        for col, width, speed, life in (("#fff4b0", 7, 1500.0, 0.50),
+                                        ("#ffb347", 5, 1050.0, 0.62),
+                                        ("#ff5c5c", 3, 700.0, 0.75)):
+            self.rings.append({
+                "x": x, "y": y, "r": src["r"], "life": life, "max": life,
+                "col": col, "v": speed,
+                "id": cv.create_oval(x, y, x, y, outline=col, width=width)})
+        for col in ("#fff4b0", "#ffb347", "#ff5c5c", "#ffffff"):
+            self._spark(x, y, col, 7, 900.0)
+        self._boink(kind="boom")
+
+    # ── simulation step ──
+    def _tick(self):
+        if not self.running:
+            return
+        try:
+            self._step()
+        except Exception:
+            self.stop_game()        # decorative: drop it, never the job
+        if self.running:
+            self._after = self.frame.after(16, self._tick)
+
+    def _step(self):
+        import math, time as _t
+        now = _t.perf_counter()
+        dt = min(now - self.last, 1 / 30)
+        self.last = now
+        if self.canvas is None:           # no game on: just the job clock
+            if self.t0 is not None:
+                self.time_lbl.configure(text=self._clock(_t.time() - self.t0))
+            return
+        self._place()                     # follow the Log around
+        if self._geom == "hidden":
+            return
+        W, H = self._size()
+        if self._wh != (W, H):
+            if self._wh is not None and self.ground:
+                self._resized(W - self._wh[0], H - self._wh[1], W, H)
+            self._wh = (W, H)
+        theta = self.SWAY * math.sin((now - self.phase0) * 0.75)
+        gx, gy = self.GRAVITY * math.sin(theta), self.GRAVITY * math.cos(theta)
+        balls = self.balls
+        # Finer substeps while an arrow is in the air: at full draw it
+        # covers more than a ball's width in one coarse step.
+        steps = 8 if self.arrows else 3
+        h = dt / steps
+        for _ in range(steps):
+            for b in balls:
+                if b is self.grabbed:
+                    # Follow the cursor on a stiff spring; its velocity is
+                    # what the ball keeps when released (a fling).
+                    b["vx"] = (self.mouse[0] - b["x"]) * 22.0
+                    b["vy"] = (self.mouse[1] - b["y"]) * 22.0
+                else:
+                    air = 1.0 - self.AIR * h
+                    b["vx"] = (b["vx"] + gx * h) * air
+                    b["vy"] = (b["vy"] + gy * h) * air
+                b["x"] += b["vx"] * h
+                b["y"] += b["vy"] * h
+                r = b["r"]
+                if b["x"] < r:
+                    b["x"] = r
+                    if b["vx"] < 0:
+                        if -b["vx"] > self.SPARK_SPEED * 1.6:
+                            self._spark(0, b["y"], b["col"], 3)
+                        b["vx"] = -b["vx"] * self.WALL_E
+                elif b["x"] > W - r:
+                    b["x"] = W - r
+                    if b["vx"] > 0:
+                        if b["vx"] > self.SPARK_SPEED * 1.6:
+                            self._spark(W, b["y"], b["col"], 3)
+                        b["vx"] = -b["vx"] * self.WALL_E
+                if b["y"] < r:
+                    b["y"] = r
+                    if b["vy"] < 0:
+                        b["vy"] = -b["vy"] * self.WALL_E
+                elif b["y"] > H - r:
+                    b["y"] = H - r
+                    if b["vy"] > 0:
+                        if b["vy"] > 330.0:
+                            self._boink(b["r"])
+                        if b["vy"] > self.SPARK_SPEED * 1.6:
+                            self._spark(b["x"], H, b["col"], 3)
+                        # a gentle landing just stops (no endless
+                        # micro-bounces); a real one bounces
+                        b["vy"] = (-b["vy"] * self.WALL_E
+                                   if b["vy"] > self.REST else 0.0)
+                        b["vx"] *= 0.99           # floor friction
+            if self.arrows:
+                self._arrows_step(h, self.GRAVITY, W, H)
+            if self.ground:
+                self._arrow_perches(balls)
+            n = len(balls)
+            for i in range(n):
+                a = balls[i]
+                for j in range(i + 1, n):
+                    c = balls[j]
+                    dx, dy = c["x"] - a["x"], c["y"] - a["y"]
+                    rr = a["r"] + c["r"]
+                    d2 = dx * dx + dy * dy
+                    if d2 >= rr * rr or d2 == 0.0:
+                        continue
+                    d = math.sqrt(d2)
+                    nx, ny = dx / d, dy / d
+                    ima, imc = 1.0 / a["m"], 1.0 / c["m"]
+                    # push apart in proportion to mass
+                    over = (rr - d) / (ima + imc)
+                    a["x"] -= nx * over * ima
+                    a["y"] -= ny * over * ima
+                    c["x"] += nx * over * imc
+                    c["y"] += ny * over * imc
+                    vn = (c["vx"] - a["vx"]) * nx + (c["vy"] - a["vy"]) * ny
+                    if vn < 0:
+                        e_ = self.BALL_E if -vn > self.REST else 0.0
+                        jimp = -(1 + e_) * vn / (ima + imc)
+                        a["vx"] -= jimp * ima * nx
+                        a["vy"] -= jimp * ima * ny
+                        c["vx"] += jimp * imc * nx
+                        c["vy"] += jimp * imc * ny
+                        if -vn > 150.0:
+                            self._boink(min(a["r"], c["r"]))
+                        if -vn > self.SPARK_SPEED:
+                            self._spark(a["x"] + nx * a["r"],
+                                        a["y"] + ny * a["r"],
+                                        self._mix(a["col"], c["col"], 0.5),
+                                        4, min(520.0, -vn * 0.6))
+        # ── draw ──
+        cv = self.canvas
+        if self.bow:
+            self._bow_draw(W, H)
+        if self.arrows or self.ground:
+            self._arrows_draw()
+        for b in balls:
+            x, y, r = b["x"], b["y"], b["r"]
+            cv.coords(b["body"], x - r, y - r, x + r, y + r)
+            if b["img"] is not None:
+                cv.coords(b["img"], x, y)
+            elif b["shine"] is not None:
+                s = r * 0.42
+                cx, cy = x - r * 0.36, y - r * 0.36
+                cv.coords(b["shine"], cx - s / 2, cy - s / 2,
+                          cx + s / 2, cy + s / 2)
+        for sp in self.sparks[:]:
+            sp["life"] -= dt
+            if sp["life"] <= 0:
+                cv.delete(sp["id"])
+                self.sparks.remove(sp)
+                continue
+            sp["vy"] += (-260.0 if sp.get("lift") else gy * 0.35) * dt
+            ox, oy = sp["x"], sp["y"]
+            sp["x"] += sp["vx"] * dt
+            sp["y"] += sp["vy"] * dt
+            k = sp["life"] / sp["max"]
+            cv.coords(sp["id"], ox - sp["vx"] * 0.012, oy - sp["vy"] * 0.012,
+                      sp["x"], sp["y"])
+            cv.itemconfigure(sp["id"],
+                             fill=self._mix(T.CRUST, sp["col"], k))
+        for rg in self.rings[:]:
+            rg["life"] -= dt
+            if rg["life"] <= 0:
+                cv.delete(rg["id"])
+                self.rings.remove(rg)
+                continue
+            rg["r"] += rg.get("v", 620.0) * dt
+            k = rg["life"] / rg["max"]
+            cv.coords(rg["id"], rg["x"] - rg["r"], rg["y"] - rg["r"],
+                      rg["x"] + rg["r"], rg["y"] + rg["r"])
+            cv.itemconfigure(rg["id"], outline=self._mix(
+                T.CRUST, rg.get("col", T.ACCENT), k))
+        for sm in self.smokes[:]:
+            sm["life"] -= dt
+            if sm["life"] <= 0:
+                cv.delete(sm["id"])
+                self.smokes.remove(sm)
+                continue
+            k = sm["life"] / sm["max"]
+            sm["sway"] += 2.2 * dt
+            sm["x"] += (sm["vx"] + 14.0 * math.sin(sm["sway"])) * dt
+            sm["y"] += sm["vy"] * dt
+            sm["r"] += sm["grow"] * dt
+            cv.coords(sm["id"], sm["x"] - sm["r"], sm["y"] - sm["r"],
+                      sm["x"] + sm["r"], sm["y"] + sm["r"])
+            # fade toward the background (never quite reaching the colour
+            # key, which would punch a hole in the layer)
+            cv.itemconfigure(sm["id"], fill=self._mix(
+                T.CRUST, sm["col"], 0.12 + 0.6 * k))
+        if self.t0 is not None:
+            self.time_lbl.configure(text=self._clock(_t.time() - self.t0))
+
+
 class TextRedirector:
     def __init__(self, widget, tag=""):
         self.widget = widget
@@ -9583,7 +11191,7 @@ class GameBananaBrowser:
                                   command=self._prev_page)
         self.prev_btn.pack(side="right", padx=2)
 
-        # Fixed bottom pane for Setup Quick Actions (hidden by default)
+        # Fixed bottom pane for Setup Other Actions (hidden by default)
         self._setup_actions_frame = tk.Frame(left, bg=T.BG)
         # (will be shown/hidden via pack/pack_forget in _build_setup_ui)
 
@@ -9631,6 +11239,14 @@ class GameBananaBrowser:
                   bg=T.SURFACE1, fg=T.FG, font=(T.FONT, T.SZ_SM),
                   relief="flat", cursor="hand2",
                   command=self._clear_log).pack(side="right", padx=10, pady=(4, 2))
+        # Ball Drop: starts / stops the physics game played over the Log
+        # (BusyPhysics).  It is never started automatically.
+        self._ball_drop_btn = tk.Button(
+            hdr, text="Ball Drop", width=14,
+            bg=T.SURFACE1, fg=T.FG, font=(T.FONT, T.SZ_SM),
+            relief="flat", cursor="hand2",
+            command=lambda: self._busy_fx.toggle_game())
+        self._ball_drop_btn.pack(side="right", padx=(0, 0), pady=(4, 2))
 
         # Download progress bar (hidden by default)
         self.progress_frame = tk.Frame(right, bg=T.SURFACE)
@@ -9666,6 +11282,12 @@ class GameBananaBrowser:
             font=(T.MONO, T.SZ_MD), relief="flat")
         self.log.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.log.tag_configure("stderr", foreground=T.RED)
+        # Physics panel shown above the log while a long job runs.
+        self._busy_fx = BusyPhysics(right, before=self.log, target=self.log)
+        self._busy_fx.on_game_change = lambda on: self._ball_drop_btn.configure(
+            text="Stop Ball Drop" if on else "Ball Drop",
+            bg=T.ACCENT if on else T.SURFACE1, fg=T.BG if on else T.FG)
+        self._busy_fx_jobs = 0
 
     def _clear_log(self):
         self.log.configure(state="normal")
@@ -12322,6 +13944,13 @@ class GameBananaBrowser:
         ).pack(side="left", padx=(0, 6))
 
         tk.Button(
+            btn_row, text="Rename", width=10,
+            bg=T.SURFACE1, fg=T.FG, font=(T.FONT, T.SZ_SM, "bold"),
+            relief="flat", cursor="hand2",
+            command=lambda n=profile_name: self._rename_profile(n),
+        ).pack(side="left", padx=(0, 6))
+
+        tk.Button(
             btn_row, text="Duplicate", width=10,
             bg=T.SURFACE1, fg=T.FG, font=(T.FONT, T.SZ_SM, "bold"),
             relief="flat", cursor="hand2",
@@ -12527,20 +14156,38 @@ class GameBananaBrowser:
         """Prompt for a new name and rename the profile."""
         new_name = simpledialog.askstring(
             "Rename Profile", f"New name for '{old_name}':",
-            parent=self.root)
+            initialvalue=old_name, parent=self.root)
         if not new_name or not new_name.strip() or new_name.strip() == old_name:
             return
         new_name = new_name.strip()
         profiles = load_profiles()
-        if new_name in profiles:
+        # Names differing only by case are the same profile to the user.
+        clash = next((n for n in profiles
+                      if n.lower() == new_name.lower() and n != old_name), None)
+        if clash:
             messagebox.showwarning("Name Taken",
-                                   f"A profile named '{new_name}' already exists.")
+                                   f"A profile named '{clash}' already exists.")
             return
-        if rename_profile(old_name, new_name):
-            print(f"  Renamed profile '{old_name}' -> '{new_name}'")
-            self._show_profiles()
-        else:
+        if not rename_profile(old_name, new_name):
             messagebox.showerror("Error", "Could not rename profile.")
+            return
+        print(f"  Renamed profile '{old_name}' -> '{new_name}'")
+        # Everything that remembers the profile by name follows the rename
+        # — a stale name would make the next download re-create the old
+        # profile (add_mod_to_profile creates missing ones by design).
+        if getattr(self, "_active_user_profile", None) == old_name:
+            self._active_user_profile = new_name
+        if getattr(self, "_profile_mode_target", None) == old_name:
+            self._profile_mode_target = new_name
+        try:
+            was_selected = self._profile_list_var.get() == old_name
+            self._profile_combo.configure(values=sorted(load_profiles()))
+            if was_selected:
+                self._profile_list_var.set(new_name)
+            self._recolor_all_slot_pickers()
+        except Exception:
+            pass
+        self._show_profiles()
 
     def _duplicate_profile(self, old_name):
         """Prompt for a name and deep-copy the profile under that name.
@@ -15698,8 +17345,10 @@ class GameBananaBrowser:
                             f"'{profile_name}' updated to {count} mod(s).")
         self._show_profiles()
 
-    def _load_profile(self, profile_name):
-        """Load a saved profile onto the SD card — downloads and installs each mod."""
+    def _load_profile(self, profile_name, confirmed=False):
+        """Load a saved profile onto the SD card — downloads and installs each mod.
+        ``confirmed=True`` skips the "Sync profile…?" question: the caller
+        (the after-Provision profile picker) already asked."""
         profiles = load_profiles()
         profile_data = profiles.get(profile_name)
         if not profile_data:
@@ -15792,7 +17441,7 @@ class GameBananaBrowser:
             msg += f"  {len(disabled)} mod(s) disabled — will be uninstalled from SD if present\n"
         msg += "\nProceed?"
 
-        if not messagebox.askyesno("Load Profile", msg):
+        if not confirmed and not messagebox.askyesno("Load Profile", msg):
             return
 
         self._run_async(self._do_load_profile, profile_name, downloadable, manual)
@@ -15893,6 +17542,123 @@ class GameBananaBrowser:
                         slots.add(f"c{int(tok):02d}")
         return slots
 
+    def _scan_mod_folders_by_id(self):
+        """``{str(mod_id): [folder, …]}`` — *every* folder on the card
+        carrying that id in its .gb_meta.json (an SD-overlay pack deploys
+        one folder per sub-mod, all under the pack's id)."""
+        out = {}
+        if not os.path.isdir(ARCROPOLIS_MODS):
+            return out
+        for entry in sorted(os.listdir(ARCROPOLIS_MODS)):
+            try:
+                with open(os.path.join(ARCROPOLIS_MODS, entry,
+                                       ".gb_meta.json"), "r",
+                          encoding="utf-8") as f:
+                    mid = (json.load(f) or {}).get("mod_id")
+            except Exception:
+                continue
+            if mid is not None:
+                out.setdefault(str(mid), []).append(entry)
+        return out
+
+    def _is_overlay_install(self, folder):
+        """True when *folder* was deployed by the SD-overlay install path
+        (``overlay_parent`` in its .gb_meta.json)."""
+        if not folder:
+            return False
+        try:
+            with open(os.path.join(ARCROPOLIS_MODS, folder, ".gb_meta.json"),
+                      "r", encoding="utf-8") as f:
+                return bool((json.load(f) or {}).get("overlay_parent"))
+        except Exception:
+            return False
+
+    def _overlay_install_current(self, mod_id, folder):
+        """True when *folder* is an overlay install that came from the
+        archive now in the cache (``archive`` in its .gb_meta.json equals
+        the cached file name).  A copy with no recorded archive — put on
+        the card before that was tracked — is treated as outdated, so it
+        is replaced once and tracked from then on."""
+        if not folder:
+            return False
+        try:
+            with open(os.path.join(ARCROPOLIS_MODS, folder, ".gb_meta.json"),
+                      "r", encoding="utf-8") as f:
+                meta = json.load(f) or {}
+        except Exception:
+            return False
+        if not meta.get("overlay_parent"):
+            return False
+        on_card = meta.get("archive")
+        cached = cached_archive_name(mod_id)
+        if not on_card or (cached is not None and cached != on_card):
+            return False
+        # Complete?  A pack is several folders; an interrupted install or
+        # removal leaves some of them (or only part of one) and those
+        # still carry the pack's id.  Compare with what the install
+        # recorded, or — for a copy made before that was recorded — with
+        # the cached archive.
+        expect = {}                 # sub-mod folder -> file count (or None)
+        if meta.get("overlay_subs"):
+            for sub in meta["overlay_subs"]:
+                try:
+                    with open(os.path.join(ARCROPOLIS_MODS, sub,
+                                           ".gb_meta.json"), "r",
+                              encoding="utf-8") as f:
+                        expect[sub] = (json.load(f) or {}).get("files")
+                except Exception:
+                    return False            # a listed folder is gone
+        else:
+            root = _find_overlay_root(os.path.join(
+                MOD_CACHE_DIR, str(mod_id), "extracted"))
+            mods_dir = os.path.join(root, "ultimate", "mods") if root else ""
+            if os.path.isdir(mods_dir):
+                for sub in os.listdir(mods_dir):
+                    if os.path.isdir(os.path.join(mods_dir, sub)):
+                        expect[sub] = _count_mod_files(
+                            os.path.join(mods_dir, sub))
+        for sub, want in expect.items():
+            on_sd = os.path.join(ARCROPOLIS_MODS, sub)
+            if not os.path.isdir(on_sd):
+                return False
+            # a few files fewer is the hygiene pass; a real gap is damage
+            if want and _count_mod_files(on_sd) < want * 0.97:
+                return False
+        for pack in SETUP_PACKS.values():   # a known pack: its marker too
+            if str(pack.get("gamebanana_id")) == str(mod_id) \
+                    and not os.path.exists(os.path.join(ARCROPOLIS_MODS,
+                                                        pack["marker"])):
+                return False
+        return True
+
+    def _refresh_stale_pack_caches(self, downloadable):
+        """For every modpack in the install set whose cached archive is no
+        longer the file GameBanana serves, drop the cache so the sync
+        downloads the current one.  Returns the mod ids to reinstall.
+        Offline / API trouble leaves the cache alone."""
+        stale = set()
+        for m in downloadable:
+            mid = m.get("mod_id")
+            if mid is None or is_local_mod_id(mid) \
+                    or (m.get("mod_type") or "").lower() != "modpack":
+                continue
+            cached = cached_archive_name(mid)
+            if not cached:
+                continue
+            try:
+                files = api_get_mod_files(mid).get("_aFiles") or []
+            except Exception:
+                continue
+            current = (files[0].get("_sFile") if files else None)
+            if not current or current == cached:
+                continue
+            print(f"  ⬆ {m.get('name', mid)}: GameBanana now serves "
+                  f"{current} (cached: {cached}) — refreshing the cache.")
+            shutil.rmtree(os.path.join(MOD_CACHE_DIR, str(mid)),
+                          ignore_errors=True)
+            stale.add(str(mid))
+        return stale
+
     def _scan_installed_mod_ids(self):
         """Walk ``ARCROPOLIS_MODS`` and return ``{mod_id: folder_name}``
         for every installed mod folder that has a ``.gb_meta.json`` with
@@ -15969,6 +17735,14 @@ class GameBananaBrowser:
             mid = m.get("mod_id")
             if not mid:
                 continue
+            # A gameplay pack is deployed as its authors built it: the
+            # skin-oriented strips don't rewrite its cache, and the two
+            # "looks broken, reinstall" heuristics below don't apply to it
+            # (its config.json is deliberate; flagging it re-copied half a
+            # gigabyte on every sync, and an interrupted re-copy is how a
+            # card ended up with half of TR4SH).
+            if (m.get("mod_type") or "").lower() == "modpack":
+                continue
             cache_dir = os.path.join(MOD_CACHE_DIR, str(mid))
             extracted = os.path.join(cache_dir, "extracted")
             if not _extracted_cache_ok(extracted):
@@ -16018,7 +17792,7 @@ class GameBananaBrowser:
             if mid_str in force_reinstall:
                 continue
             sd_folder = sd_by_str.get(mid_str)
-            if not sd_folder:
+            if not sd_folder or self._is_overlay_install(sd_folder):
                 continue
             sd_path = os.path.join(ARCROPOLIS_MODS, sd_folder)
             broken, reason = _archive_has_fatal_author_bug(sd_path)
@@ -16057,6 +17831,8 @@ class GameBananaBrowser:
         installed_map, _ = self._scan_installed_mod_ids()
         bloated = []
         for mid_str, folder in installed_map.items():
+            if self._is_overlay_install(folder):
+                continue
             sd_mod = os.path.join(ARCROPOLIS_MODS, folder)
             cfg_path = os.path.join(sd_mod, "config.json")
             if not os.path.isfile(cfg_path):
@@ -16159,6 +17935,16 @@ class GameBananaBrowser:
             print(f"  ! Pre-flight cache check failed: {e}",
                   file=sys.stderr)
 
+        # ── Pre-flight: outdated cached packs ──
+        # The mod cache is cache-first forever, which is fine for a skin
+        # but not for a gameplay pack: its plugin is built for one Smash
+        # version, so an old cached archive (TR4SH 1.44 with 1.46 out)
+        # installs a build that crashes the game at boot.
+        try:
+            force_reinstall_ids |= self._refresh_stale_pack_caches(downloadable)
+        except Exception as e:
+            print(f"  ! Pack version check failed: {e}", file=sys.stderr)
+
         # ── Compute delta ──
         os.makedirs(ARCROPOLIS_MODS, exist_ok=True)
         installed_map, untracked = self._scan_installed_mod_ids()
@@ -16197,6 +17983,12 @@ class GameBananaBrowser:
                 to_install_ids.add(mid)
             elif sd_slots and profile_slots and sd_slots == profile_slots:
                 already_ok.add(mid)
+            elif self._overlay_install_current(mid, sd_folder):
+                # An SD-overlay pack (TR4SH, HDR…) has no slot to compare
+                # and spans several folders; once on the card it stays —
+                # otherwise every sync re-copied half a gigabyte.  "Current"
+                # means the card's copy came from the archive now cached.
+                already_ok.add(mid)
             else:
                 # Stale or unknown — reinstall to the right slots.
                 to_remove.add(mid)
@@ -16211,18 +18003,53 @@ class GameBananaBrowser:
         # 1. Remove mods that are on the SD but no longer in the profile.
         if to_remove:
             import shutil as _sh
+            # An overlay pack deploys several folders under one mod id;
+            # installed_map remembers only one of them, so collect all.
+            folders_by_id = self._scan_mod_folders_by_id()
             for mid in to_remove:
                 folder = installed_map.get(mid) or installed_map.get(int(mid)
                                                                      if mid.isdigit()
                                                                      else mid)
-                if not folder:
-                    continue
-                full = os.path.join(ARCROPOLIS_MODS, folder)
-                try:
-                    _sh.rmtree(full, ignore_errors=True)
-                    print(f"    - Removed: {folder}")
-                except Exception as e:
-                    print(f"    ! Could not remove {folder}: {e}")
+                folders = folders_by_id.get(str(mid)) or (
+                    [folder] if folder else [])
+                laid = set()      # files the overlay put outside mods/
+                for folder in folders:
+                    full = os.path.join(ARCROPOLIS_MODS, folder)
+                    try:
+                        with open(os.path.join(full, ".gb_meta.json"), "r",
+                                  encoding="utf-8") as f:
+                            laid.update((json.load(f) or {})
+                                        .get("overlay_files") or [])
+                    except Exception:
+                        pass
+                    try:
+                        print(f"    - Removing: {folder} …")
+                        _sh.rmtree(full, ignore_errors=True)
+                        print(f"    - Removed: {folder}")
+                    except Exception as e:
+                        print(f"    ! Could not remove {folder}: {e}")
+                # The pack's plugins and other atmosphere files go with it
+                # (a reinstall lays the new version's down again).  Core
+                # files are never touched: Skyline's exefs and any plugin
+                # the Setup itself manages.
+                for rel in sorted(laid):
+                    base = os.path.basename(rel).lower()
+                    if "/exefs/" in rel.lower() or (
+                            base in KNOWN_PLUGINS
+                            and not KNOWN_PLUGINS[base].get("pack")):
+                        continue
+                    path = os.path.join(SD_CARD, *rel.split("/"))
+                    if os.path.isfile(path):
+                        try:
+                            os.remove(path)
+                            print(f"    - Removed {rel}")
+                        except OSError:
+                            pass
+                # Cards installed before overlay_files was recorded: the
+                # known packs' plugins / extras / retired plugins.
+                for pkey, pack in SETUP_PACKS.items():
+                    if str(pack.get("gamebanana_id")) == str(mid):
+                        self._remove_pack_extras(pkey)
             # Stale ARCropolis cache must be cleared whenever the layout
             # changes, otherwise the Switch will boot with a mismatched
             # romfs index.
@@ -16513,6 +18340,8 @@ class GameBananaBrowser:
             meta = os.path.join(full, ".gb_meta.json")
             if not os.path.exists(meta):
                 continue
+            if self._is_overlay_install(entry):
+                continue        # a pack's folders are left as shipped
             try:
                 report = sanity_check_install(full)
             except Exception as e:
@@ -16869,6 +18698,14 @@ class GameBananaBrowser:
     def _do_setup_initial_checks(self):
         """Background: run the local-only health checks (no GitHub) and
         push them into the UI, then chain into the GitHub fetch."""
+        # The tab reflects the card, not a selection in the app: no card,
+        # or a card nothing was provisioned onto, shows no check sections
+        # at all — just a pointer at Provision ▾.
+        state = card_provision_state()
+        if state is None:
+            self.root.after(0, self._render_unprovisioned)
+            return
+        self._bind_setup_to_card(state)
         checks = self._run_health_checks(latest={})
         # Reuse the same finisher used after the GitHub fetch — it knows
         # how to repaint check rows from the main thread.
@@ -16876,12 +18713,60 @@ class GameBananaBrowser:
         # Now do the slower GitHub fetch on the same background slot.
         self._do_setup_fetch_github()
 
+    def _bind_setup_to_card(self, state):
+        """Measure the checks against what the card was provisioned as:
+        the saved Setup it names (if that still exists with that type),
+        else any saved Setup of the same type, else the bare type."""
+        setups = load_setups()["setups"]
+        name = state.get("setup")
+        if name not in setups or setup_type(setups[name]) != state["type"]:
+            name = next((n for n in sorted(setups)
+                         if setup_type(setups[n]) == state["type"]), None)
+        self._active_setup = name
+        self._card_type = None if name else state["type"]
+        self._active_setup_cfg()
+
+    def _render_unprovisioned(self):
+        """Main-thread: the Setup tab for a card nothing has been
+        provisioned onto (or no card): no Core / Plugins / SD Health
+        sections, only where to start."""
+        if self._active_view != "setup":
+            return
+        if (not hasattr(self, "_setup_checks_frame")
+                or not self._setup_checks_frame.winfo_exists()):
+            return
+        have_sd = os.path.isdir(SD_CARD)
+        if (hasattr(self, "_setup_summary_label")
+                and self._setup_summary_label.winfo_exists()):
+            self._setup_summary_label.configure(
+                text=("Nothing provisioned on this card yet" if have_sd
+                      else "No SD card inserted"), fg=T.OVERLAY)
+        if (hasattr(self, "_setup_version_label")
+                and self._setup_version_label.winfo_exists()):
+            self._setup_version_label.configure(text="")
+        for w in self._setup_checks_frame.winfo_children():
+            w.destroy()
+        tk.Label(
+            self._setup_checks_frame,
+            text=("Choose a setup from Provision ▾ to set this card up. "
+                  "Its core components, plugins and SD health checks "
+                  "appear here once it has been provisioned."
+                  if have_sd else
+                  "Insert the Switch's SD card, then choose a setup from "
+                  "Provision ▾."),
+            bg=T.SURFACE, fg=T.OVERLAY, justify="left", wraplength=780,
+            font=(T.FONT, T.SZ_MD)).pack(anchor="w", padx=12, pady=(10, 0))
+        self._setup_checks_done = True
+        for btn in getattr(self, "_setup_action_btns", []):
+            if btn.winfo_exists():
+                btn.configure(state="normal", cursor="hand2")
+
     def _refresh_setup_check_rows(self, checks):
         """Main-thread: replace placeholder rows with the supplied checks
         and re-enable the action buttons.
 
         Originally we waited for the GitHub fetch before re-enabling, but
-        that left "Quick Actions" / "Provision" looking active (their
+        that left "Other Actions" / "Provision" looking active (their
         bg colors aren't muted) while still being ``state="disabled"``,
         so clicks silently did nothing.  The buttons themselves don't
         need GitHub data — only the version-comparison rows do — so
@@ -16909,7 +18794,7 @@ class GameBananaBrowser:
         The table is cached for _GH_LATEST_TTL seconds per set of
         sources, so re-rendering the Setup tab (after a Fix, a
         provision, picking a Setup, an SD insert) doesn't hit GitHub
-        again.  Quick Actions → Refresh Setup Checks forces a fetch."""
+        again.  Other Actions → Refresh Setup Checks forces a fetch."""
         cache = getattr(self, "_gh_latest_cache", None)
         cache_key = self._gh_cache_key()   # (the loop below reuses `key`)
         force = getattr(self, "_force_gh_refresh", False)
@@ -16917,7 +18802,7 @@ class GameBananaBrowser:
         if (cache and not force and cache.get("key") == cache_key
                 and time.time() - cache.get("ts", 0) < self._GH_LATEST_TTL):
             age = int(time.time() - cache["ts"])
-            print(f"  (GitHub versions from {age}s ago — Quick Actions → "
+            print(f"  (GitHub versions from {age}s ago — Other Actions → "
                   f"Refresh Setup Checks to re-fetch)")
             latest = dict(cache["latest"])
             self._setup_latest = latest
@@ -17145,21 +19030,9 @@ class GameBananaBrowser:
                   bg=T.SURFACE1, fg=T.FG, font=(T.FONT, T.SZ_SM, "bold"),
                   relief="flat", cursor="hand2", padx=8,
                   command=self._open_setup_dialog).pack(side="right")
-        self._setup_choice_var = tk.StringVar(value=active_setup or "")
-        setup_combo = ttk.Combobox(
-            chooser, textvariable=self._setup_choice_var,
-            values=setup_names, state="readonly", width=26,
-            font=(T.FONT, T.SZ_MD))
-        setup_combo.pack(side="left")
-
-        def _on_setup_chosen(_e=None):
-            chosen = self._setup_choice_var.get()
-            if chosen and chosen != self._active_setup_name():
-                self._set_active_setup(chosen)
-                print(f"  Active {SETUP_NOUN.lower()}: '{chosen}'")
-                self._show_setup()
-        setup_combo.bind("<<ComboboxSelected>>", _on_setup_chosen)
-        self._setup_combo = setup_combo
+        # No chooser and no "selected Setup" label here: a Setup is picked
+        # in the Provision ▾ dropdown at the moment of provisioning, and
+        # the checks below reflect what the card was provisioned as.
 
         # Rows B/C: the action grid (built below, hosted here).
         bar_host = tk.Frame(af, bg=T.SURFACE)
@@ -17252,8 +19125,7 @@ class GameBananaBrowser:
         # ── Action grid, under the Setup chooser ──
         # One grid, three equal-width columns filling the pane, so every
         # row's buttons line up and both rows end on the same right edge:
-        #   row 0:  Provision        | Clean Provision (red, wipes SD) | Clear All Cosmetics
-        #   row 1:  Quick Actions ▾  | ⚡ Inject Payload (spans 2)
+        #   Provision ▾ (formats, then installs) | ⚡ Inject Payload ▾ | Other Actions ▾
         bar = tk.Frame(bar_host, bg=T.SURFACE)
         bar.pack(fill="x")
         # Equal-width columns that share the pane (minus the RCM label),
@@ -17287,35 +19159,27 @@ class GameBananaBrowser:
             finally:
                 menu.grab_release()
 
-        # ── Row 0 ──
+        # ── One row, three buttons: Provision ▾ | Inject ▾ | Other Actions ▾ ──
+        # Provision is always the clean one (the user's call, 2026-11-19:
+        # a non-clean provision leaves strays and false positives): it
+        # drops the list of saved Setups, and picking one goes through the
+        # two-step format warning before the card is formatted and the
+        # Setup laid down fresh.  Single components can still be repaired
+        # in place from their check row, and Other Actions has Update ALL.
         provision_btn = tk.Button(
-            bar, text="Provision",
+            bar, text="Provision  ▾",
             bg=T.GREEN, fg=T.BG,
             activebackground=T.GREEN, activeforeground=T.BG,
-            cursor="hand2" if not is_pending else "arrow",
-            state="normal" if not is_pending else "disabled",
-            command=lambda: self._provision_setup(self._active_setup_name()),
-            **_btn_kw)
+            cursor="hand2", **_btn_kw)
+        provision_btn.configure(command=lambda b=provision_btn:
+                                self._popup_setup_menu(
+                                    b, self._clean_provision_confirm))
         provision_btn.grid(row=0, column=0, **_grid)
-        self._setup_action_btns = [provision_btn]
-
-        tk.Button(bar, text="Clear All Cosmetics",
-                  bg=T.PEACH, fg=T.BG,
-                  activebackground=T.PEACH, activeforeground=T.BG,
-                  cursor="hand2",
-                  command=self._clear_all_mods_confirm,
-                  **_btn_kw).grid(row=0, column=2, **_grid)
-
-        tk.Button(bar, text="Clean Provision",
-                  bg=T.RED, fg=T.CRUST,
-                  activebackground=T.RED, activeforeground=T.CRUST,
-                  cursor="hand2",
-                  command=self._clean_provision_confirm,
-                  **_btn_kw).grid(row=0, column=1, **_grid)
+        self._setup_action_btns = []
 
         # ── Row 1 ──
         actions_btn = tk.Button(
-            bar, text="Quick Actions  ▾",
+            bar, text="Other Actions  ▾",
             bg=T.ACCENT, fg=T.BG,
             activebackground=T.ACCENT, activeforeground=T.BG,
             cursor="hand2" if not is_pending else "arrow",
@@ -17336,9 +19200,14 @@ class GameBananaBrowser:
                       self._show_setup())),
         ]:
             actions_menu.add_command(label=label, command=cmd)
+        # Takes every profile-loaded mod back off the card (two-step
+        # confirmation inside); the Setup's core stays.
+        actions_menu.add_separator()
+        actions_menu.add_command(label="Remove Installed Profiles…",
+                                 command=self._clear_all_mods_confirm)
         actions_btn.configure(
             command=lambda: _popup_below(actions_menu, actions_btn))
-        actions_btn.grid(row=1, column=0, **_grid)
+        actions_btn.grid(row=0, column=2, **_grid)
         self._setup_action_btns.append(actions_btn)
 
         # Inject Payload ▾ — a dropdown of every known payload (bundled,
@@ -17355,7 +19224,7 @@ class GameBananaBrowser:
             cursor="hand2", **_btn_kw)
         self._rcm_inject_btn.configure(
             command=lambda: self._popup_payload_menu(self._rcm_inject_btn))
-        self._rcm_inject_btn.grid(row=1, column=1, columnspan=2, **_grid)
+        self._rcm_inject_btn.grid(row=0, column=1, **_grid)
 
         # The RCM state label was dropped for space; the inject button's
         # colour carries the state.  _rcm_poll_update still writes to
@@ -17506,16 +19375,28 @@ class GameBananaBrowser:
         # skyline-dev's latest as the thing to chase — installing it is
         # exactly what upstream warns crashes the game.
         deluxe_active = ONLINE_DELUXE_NRO in self._active_plugin_list()
+        skyline_warn = False
         if skyline_ok:
             skyline_detail = "Installed"
             if deluxe_active:
                 skyline_detail += "  (pinned by SSBU Online Deluxe)"
             elif sky_info:
                 skyline_detail += f"  (latest: {sky_info['version']})"
+            # A Skyline this app stamped for another Setup type (Online
+            # Deluxe pins its own build; the others use skyline-dev's) is
+            # replaced.  An unstamped one is left alone — passing the
+            # wanted source as the stock one makes "no stamp" a match.
+            want = self._wanted_source("skyline")
+            mm = want and stamp_mismatch("skyline", want[0], want[1],
+                                         want[0], want[1])
+            if mm:
+                skyline_detail = f"Installed  ⚠ {mm}"
+                skyline_warn = True
         checks.append({
             "name": "Skyline (exefs)",
             "desc": "Plugin framework",
-            "ok": skyline_ok,
+            "ok": skyline_ok and not skyline_warn,
+            "warn": skyline_warn,
             "detail": skyline_detail,
             "fixable": True, "fix_key": "skyline",
             "section": "core",
@@ -17573,8 +19454,13 @@ class GameBananaBrowser:
         plugin_repo_map = _NRO_TO_REPO
         profile = PROVISIONING_PROFILES.get(self._active_profile, {})
         profile_plugins = set(CORE_PLUGINS + self._active_plugin_list())
+        # Plugins the Setup's pack lays down itself count as "in this
+        # Setup" (never flagged for removal) but get no row of their own —
+        # the pack's row below covers them.
+        active_pack = self._active_setup_cfg().get("pack")
+        profile_plugins |= set(setup_pack_plugins(active_pack))
         for nro_name, info in KNOWN_PLUGINS.items():
-            if nro_name not in profile_plugins:
+            if nro_name not in profile_plugins or info.get("pack"):
                 continue
             nro_path = os.path.join(PLUGINS_DIR, nro_name)
             present = os.path.exists(nro_path)
@@ -17582,7 +19468,7 @@ class GameBananaBrowser:
             # A chain dependency the Online Deluxe package ships is
             # installed from that package, so judge it against the
             # package, not the plugin's own latest release.
-            if (nro_name in ONLINE_DELUXE_DEPS
+            if (deluxe_active and nro_name in ONLINE_DELUXE_DEPS
                     and repo_key != ONLINE_DELUXE_REPO_KEY
                     and package_ships(nro_name)):
                 repo_key = ONLINE_DELUXE_REPO_KEY
@@ -17620,6 +19506,16 @@ class GameBananaBrowser:
                     detail += f"  · built for Smash {req}"
                 if find_local_arcropolis_override():
                     detail += "  · local override active"
+            # Right file, wrong build?  The stamp Provision wrote says
+            # where this copy came from; a Setup of another type may need
+            # a different one under the same name (Smashline 1 vs 2).
+            if present and not (nro_name == "libarcropolis.nro"
+                                and find_local_arcropolis_override()):
+                want = self._wanted_source(nro_name)
+                mm = want and stamp_mismatch(nro_name, *want)
+                if mm:
+                    detail = f"Installed  ⚠ {mm}"
+                    warn = True
             checks.append({
                 "name": info["name"],
                 "desc": info["desc"],
@@ -17644,6 +19540,94 @@ class GameBananaBrowser:
                     "warn": True,
                     "detail": f"Not in {self._active_profile} — removed on Provision",
                     "fixable": True, "fix_key": f"remove:{nro_name}",
+                    "section": "profile",
+                })
+
+        # 4b-2. Stray plugins: any other .nro in skyline/plugins.  The
+        # folder belongs to the Setup — a plugin nobody accounts for (left
+        # by an old pack version, copied by hand long ago) is the classic
+        # "crashes at boot after a non-clean provision", so Provision
+        # removes it.  Accounted for: the Setup's plugins, whatever the
+        # Online Deluxe package ships, and the files an overlay mod on the
+        # card recorded as its own.
+        accounted = {p.lower() for p in profile_plugins}
+        accounted |= overlay_plugin_files_on_card()
+        if deluxe_active:
+            try:
+                accounted |= {str(n).lower() for n in source_package_index(
+                    ONLINE_DELUXE_REPO_KEY)["files"]}
+            except Exception:
+                pass
+        try:
+            on_card_nros = sorted(f for f in os.listdir(PLUGINS_DIR)
+                                  if f.lower().endswith(".nro"))
+        except OSError:
+            on_card_nros = []
+        for f in on_card_nros:
+            if f.lower() in KNOWN_PLUGINS or f.lower() in accounted:
+                continue
+            checks.append({
+                "name": f,
+                "desc": "Plugin that isn't part of this setup or of a mod on the card",
+                "ok": True, "warn": True,
+                "detail": "Stray plugin — removed on Provision",
+                "fixable": True, "fix_key": f"remove:{f}",
+                "section": "profile",
+            })
+
+        # 4c. Hosted packs.  Provision never installs or removes a pack —
+        # it is a profile mod (Packs tab → profile → Load to SD) — so these
+        # rows are information only (not fixable): whether the pack this
+        # Setup type hosts is on the card yet, and a warning when a pack
+        # sits on a card whose Setup can't run it (its plugin.nro is built
+        # against another type's Smashline and crashes the game at boot).
+        for pkey, pack in SETUP_PACKS.items():
+            folders = setup_pack_folders(pkey)
+            if pkey == active_pack:
+                if setup_pack_installed(pkey):
+                    ok, warn = True, False
+                    pdetail = f"On the card ({len(folders)} mod folders)"
+                    try:
+                        with open(os.path.join(ARCROPOLIS_MODS, folders[0],
+                                               ".gb_meta.json"), "r",
+                                  encoding="utf-8") as f:
+                            arch = (json.load(f) or {}).get("archive")
+                    except Exception:
+                        arch = None
+                    cached = cached_archive_name(pack["gamebanana_id"])
+                    if arch and (not cached or cached == arch):
+                        pdetail += f" · {arch}"
+                    else:
+                        warn = True
+                        pdetail += (" · version unknown or outdated — "
+                                    "Load to SD its profile again")
+                else:
+                    ok, warn = True, True
+                    has = profiles_with_pack(pkey)
+                    pdetail = ("Not on the card — Load to SD the profile "
+                               + " / ".join(f"'{n}'" for n in has[:3])
+                               if has else
+                               "Not on the card — add it to a profile from "
+                               "the Packs tab, then Load to SD")
+                checks.append({
+                    "name": f"{pack['name']} pack",
+                    "desc": "Comes from a mod profile, not from Provision",
+                    "ok": ok, "warn": warn,
+                    "detail": pdetail,
+                    "fixable": False,
+                    "section": "profile",
+                })
+            elif folders:
+                host = setup_type_hosting(pkey) or "its own"
+                checks.append({
+                    "name": f"{pack['name']} pack",
+                    "desc": f"Needs a {host} {SETUP_NOUN.lower()}",
+                    "ok": False,
+                    "detail": f"On the card, but {self._active_profile} "
+                              f"can't run it — the game will crash at boot. "
+                              f"Load a profile without it, or provision a "
+                              f"{host} {SETUP_NOUN.lower()}",
+                    "fixable": False,
                     "section": "profile",
                 })
 
@@ -17964,32 +19948,31 @@ class GameBananaBrowser:
                             wraplength=420)
         src_info.pack(side="left", padx=(8, 0))
 
-        tk.Label(edit_frame, text="Plugins:", bg=T.SURFACE, fg=T.FG,
+        # Type: what the card is for.  It fixes the plugin set (and may own
+        # a gameplay pack) — see SETUP_TYPES — so there are no per-plugin
+        # checkboxes; the "Installs:" line shows what the type lays down.
+        tk.Label(edit_frame, text="Type:", bg=T.SURFACE, fg=T.FG,
                  font=(T.FONT, T.SZ_SM, "bold")).grid(row=3, column=0,
                                                        sticky="nw",
                                                        pady=(8, 2))
-        plugins_frame = tk.Frame(edit_frame, bg=T.SURFACE)
-        plugins_frame.grid(row=3, column=1, sticky="we", pady=(8, 2))
-        plugin_vars = {}
-        for nro in selectable_plugins():
-            meta = KNOWN_PLUGINS[nro]
-            v = tk.BooleanVar(value=False)
-            plugin_vars[nro] = v
-            row = tk.Frame(plugins_frame, bg=T.SURFACE)
-            row.pack(fill="x", anchor="w")
-            tk.Checkbutton(
-                row, text=meta.get("name", nro), variable=v,
-                bg=T.SURFACE, fg=T.FG, selectcolor=T.CRUST,
-                activebackground=T.SURFACE, activeforeground=T.FG,
-                font=(T.FONT, T.SZ_SM)).pack(side="left")
-            desc = meta.get("desc", "")
-            if desc:
-                tk.Label(row, text=f"— {desc}", bg=T.SURFACE,
-                         fg=T.OVERLAY,
-                         font=(T.FONT, T.SZ_XS)).pack(side="left",
-                                                       padx=(6, 0))
+        type_frame = tk.Frame(edit_frame, bg=T.SURFACE)
+        type_frame.grid(row=3, column=1, sticky="we", pady=(8, 2))
+        type_var = tk.StringVar(value=SETUP_TYPE_DEFAULT)
+        ttk.Combobox(type_frame, textvariable=type_var, state="readonly",
+                     values=list(SETUP_TYPES), width=26,
+                     font=(T.FONT, T.SZ_SM)).pack(anchor="w")
+        type_desc = tk.Label(type_frame, text="", bg=T.SURFACE,
+                             fg=T.OVERLAY, justify="left", wraplength=440,
+                             font=(T.FONT, T.SZ_XS))
+        type_desc.pack(anchor="w", pady=(4, 0))
+        type_installs = tk.Label(type_frame, text="", bg=T.SURFACE, fg=T.FG,
+                                 justify="left", wraplength=440,
+                                 font=(T.FONT, T.SZ_XS))
+        type_installs.pack(anchor="w", pady=(2, 0))
 
         deluxe_vars = self._build_deluxe_config_widgets(edit_frame, row=4)
+        _dx_slaves = edit_frame.grid_slaves(row=4)
+        deluxe_box = _dx_slaves[0] if _dx_slaves else None
 
         status_label = tk.Label(edit_frame, text="", bg=T.SURFACE,
                                 fg=T.OVERLAY, justify="left",
@@ -18007,18 +19990,46 @@ class GameBananaBrowser:
         state = {"original_name": None}
         loading = {"flag": False}
 
+        def _type_spec():
+            return SETUP_TYPES.get(type_var.get()) \
+                or SETUP_TYPES[SETUP_TYPE_DEFAULT]
+
         def _current_cfg_from_ui():
             return {
                 "template": "Custom",
+                "type": type_var.get(),
                 "deluxe_config": self._deluxe_cfg_from_vars(deluxe_vars),
-                "plugins": [nro for nro, v in plugin_vars.items()
-                            if v.get()],
+                "plugins": list(_type_spec()["plugins"]),
             }
 
         def _refresh_status(*_args):
             cfg = _current_cfg_from_ui()
             _, msg, color = self._profile_provision_status(cfg)
             status_label.configure(text=msg, fg=color)
+
+        def _paint_type(*_args):
+            spec = _type_spec()
+            type_desc.configure(text=spec["desc"])
+            names = [KNOWN_PLUGINS[n]["name"] for n in CORE_PLUGINS]
+            names += [KNOWN_PLUGINS.get(n, {}).get("name", n)
+                      for n in setup_type_plugins(type_var.get())]
+            text = "Installs: " + ", ".join(names)
+            if spec["pack"]:
+                text += (f"\nNot installed by Provision: the "
+                         f"{SETUP_PACKS[spec['pack']]['name']} pack — load "
+                         f"it from a profile.")
+            type_installs.configure(text=text)
+            # The Online Deluxe block only means something for a type that
+            # installs it.
+            if deluxe_box is not None:
+                if spec["deluxe"]:
+                    deluxe_box.grid()
+                else:
+                    deluxe_box.grid_remove()
+            if not loading["flag"]:
+                _refresh_status()
+
+        type_var.trace_add("write", _paint_type)
 
         def _load_selected(_event=None):
             sel = listbox.curselection()
@@ -18032,9 +20043,7 @@ class GameBananaBrowser:
                 state["original_name"] = name
                 name_var.set(name)
                 self._set_deluxe_vars(deluxe_vars, cfg["deluxe_config"])
-                sel_plugins = set(cfg["plugins"])
-                for nro, v in plugin_vars.items():
-                    v.set(nro in sel_plugins)
+                type_var.set(cfg["type"])
             finally:
                 loading["flag"] = False
             ov = cfg["sources"]
@@ -18092,12 +20101,23 @@ class GameBananaBrowser:
             data["template"] = "Custom"
             # Legacy switches live on as Sources rows (setup_config
             # translates them); materialize that and drop the old keys.
-            data["sources"] = setup_config(data)["sources"]
+            # Only the user's own overrides are stored: the rows the (old)
+            # type supplied are stripped, so changing the type swaps them
+            # instead of leaving the previous type's behind.
+            user_src = strip_type_sources(setup_config(data)["sources"],
+                                          setup_type(data))
+            if user_src:
+                data["sources"] = user_src
+            else:
+                data.pop("sources", None)
             data.pop("unofficial_atmo", None)
             data.pop("nightly_arcropolis", None)
             data["deluxe_config"] = self._deluxe_cfg_from_vars(deluxe_vars)
-            data["plugins"] = [nro for nro, v in plugin_vars.items()
-                               if v.get()]
+            data["type"] = type_var.get()
+            # ``plugins`` is kept for builds that predate types; they only
+            # understand the selectable ones.
+            data["plugins"] = [p for p in _type_spec()["plugins"]
+                               if p in selectable_plugins()]
             setups[new_name] = data
             if store.get("active") == old:
                 store["active"] = new_name
@@ -18109,6 +20129,16 @@ class GameBananaBrowser:
             _refresh_listbox(select=new_name)
             self._refresh_setup_chooser()
             _refresh_status()
+            return True
+
+        def _save_and_close():
+            # The Save button: commit, then close.  (_save alone is what
+            # the toggles, Sources… and Duplicate use — those keep the
+            # dialog open.)
+            if _save():
+                if self._active_view == "setup":
+                    self._show_setup()
+                win.destroy()
 
         def _new():
             store = load_setups()
@@ -18247,8 +20277,8 @@ class GameBananaBrowser:
         # commit (typing shouldn't rename on every keystroke).
         tk.Button(btn_row, text="Save", width=8, bg=T.ACCENT, fg=T.BG,
                   font=(T.FONT, T.SZ_SM, "bold"), relief="flat",
-                  cursor="hand2", command=_save).pack(side="right",
-                                                      padx=(0, 6))
+                  cursor="hand2", command=_save_and_close).pack(
+                      side="right", padx=(0, 6))
 
         # Auto-persist every toggle; name edits commit on Save / Return.
         def _autosave(*_args):
@@ -18257,7 +20287,7 @@ class GameBananaBrowser:
             if state["original_name"]:
                 _save()
 
-        all_vars = list(plugin_vars.values()) + list(deluxe_vars.values())
+        all_vars = [type_var] + list(deluxe_vars.values())
         for v in all_vars:
             v.trace_add("write", _refresh_status)
             v.trace_add("write", _autosave)
@@ -18277,7 +20307,10 @@ class GameBananaBrowser:
             messagebox.showerror("Sources",
                                  f"{SETUP_NOUN} '{setup_name}' not found.")
             return
-        current = normalize_sources(setup.get("sources"))
+        # Effective rows: the user's overrides plus the ones the Setup's
+        # type supplies (TR4SH → Smashline 2), so the dialog shows what
+        # will really be downloaded.
+        current = setup_config(setup)["sources"]
 
         win = tk.Toplevel(parent or self.root)
         wire_cancel_sound(win)
@@ -18388,6 +20421,9 @@ class GameBananaBrowser:
                                      f"{SETUP_NOUN} '{setup_name}' vanished.",
                                      parent=win)
                 return
+            # Rows the type supplies are not stored (see strip_type_sources).
+            new = strip_type_sources(
+                new, setup_type(store["setups"][setup_name]))
             if new:
                 store["setups"][setup_name]["sources"] = new
             else:
@@ -18458,18 +20494,45 @@ class GameBananaBrowser:
         """Keep the Setup tab's chooser in step with gb_setups.json
         (rename / new / delete / duplicate) without re-running the SD
         checks."""
-        combo = getattr(self, "_setup_combo", None)
+        # Nothing on the Setup tab names a Setup any more (no chooser, no
+        # label) — kept as the hook rename / new / delete call.
+        return
+
+    def _popup_setup_menu(self, widget, on_pick):
+        """Drop the list of saved Setups under *widget* (Provision ▾ /
+        Clean Provision ▾); ``on_pick(name)`` runs for the chosen one.
+        Each entry shows the Setup's type, the current one is ticked."""
+        menu = tk.Menu(widget, tearoff=0, bg=T.SURFACE, fg=T.FG,
+                       activebackground=T.ACCENT, activeforeground=T.BG,
+                       font=(T.FONT, T.SZ_MD), bd=0,
+                       activeborderwidth=0, borderwidth=0)
+        setups = load_setups()["setups"]
+        # No tick on any entry: there is no "current" Setup to mark, and a
+        # tick next to Provision read as "already provisioned".
+        for name in sorted(setups):
+            menu.add_command(
+                label=f"{name}   —   {setup_type(setups[name])}",
+                command=lambda n=name: on_pick(n))
+        if not setups:
+            menu.add_command(label=f"(no {SETUP_NOUN.lower()}s saved)",
+                             state="disabled")
+        menu.add_separator()
+        menu.add_command(label=f"Manage {SETUP_NOUN}s…",
+                         command=self._open_setup_dialog)
         try:
-            if combo is None or not combo.winfo_exists():
-                return
-        except Exception:
-            return
-        combo.configure(values=sorted(load_setups()["setups"]))
-        self._setup_choice_var.set(self._active_setup_name() or "")
+            widget.update_idletasks()
+            menu.tk_popup(widget.winfo_rootx(),
+                          widget.winfo_rooty() + widget.winfo_height())
+        finally:
+            menu.grab_release()
 
     def _active_setup_name(self):
         """Name of the active Setup, healing a stale pointer (deleted
         or renamed) to the stored active one, else the first saved."""
+        # A card provisioned as a type no saved Setup has (see
+        # _bind_setup_to_card): no name, the bare type is used.
+        if getattr(self, "_card_type", None):
+            return None
         data = load_setups()
         setups = data["setups"]
         name = self._active_setup or data.get("active")
@@ -18484,11 +20547,36 @@ class GameBananaBrowser:
         provisioner and the GitHub version check read."""
         data = load_setups()
         name = self._active_setup_name()
-        cfg = setup_config(data["setups"].get(name) if name else None)
+        raw = data["setups"].get(name) if name else None
+        if raw is None and getattr(self, "_card_type", None):
+            raw = {"type": self._card_type}
+        cfg = setup_config(raw)
         self._use_unofficial_atmo = cfg["unofficial_atmo"]
-        self._active_profile = "Custom"
+        self._active_profile = cfg["type"]      # shown in Setup messages
         set_source_overrides(cfg["sources"])
         return cfg
+
+    def _deluxe_active(self):
+        """True when the active Setup installs SSBU Online Deluxe."""
+        return ONLINE_DELUXE_NRO in self._active_setup_cfg()["plugins"]
+
+    def _wanted_source(self, name):
+        """``(repo, ref, stock_repo, stock_ref)`` the active Setup takes
+        *name* from — a plugin file name, or "skyline".  With Online
+        Deluxe active its chain (and Skyline) come out of the Deluxe
+        package; otherwise from each component's own source row."""
+        dx = ONLINE_DELUXE_REPO_KEY
+        deluxe = self._deluxe_active()
+        if name == "skyline":
+            key = dx if deluxe else "skyline"
+        else:
+            key = _NRO_TO_REPO.get(name)
+            in_chain = name == ONLINE_DELUXE_NRO or name in ONLINE_DELUXE_DEPS
+            if deluxe and in_chain and (key == dx or package_ships(name)):
+                key = dx
+        if not key or key not in GITHUB_REPOS:
+            return None
+        return (source_repo(key), source_ref(key)) + tuple(source_default(key))
 
     def _set_active_setup(self, name):
         """Make *name* the active Setup (persisted) and invalidate the
@@ -18499,6 +20587,7 @@ class GameBananaBrowser:
         data["active"] = name
         save_setups(data)
         self._active_setup = name
+        self._card_type = None
         self._active_setup_cfg()
         self._setup_checks_done = False
         return True
@@ -18604,10 +20693,19 @@ class GameBananaBrowser:
         # (_current_cfg_from_ui), which never carries dependencies —
         # expand here so they don't read as "unexpected" on the card.
         expected = set(expand_plugin_deps(cfg["plugins"])) | set(CORE_PLUGINS)
+        want_pack = (SETUP_TYPES.get(cfg.get("type")) or {}).get("pack")
+        expected |= set(setup_pack_plugins(want_pack))
         present = {nro for nro in KNOWN_PLUGINS
                    if os.path.exists(os.path.join(PLUGINS_DIR, nro))}
         missing = expected - present
         extra = (present & set(non_core)) - expected
+        # A hosted pack that isn't on the card is not drift (it comes from
+        # a profile); a pack this type can't run is.
+        pack_notes = []
+        for pkey, pack in SETUP_PACKS.items():
+            if pkey != want_pack and setup_pack_folders(pkey):
+                pack_notes.append(f"{pack['name']} pack on the card "
+                                  f"can't run with this type")
         # The Online Deluxe config.toml is part of "provisioned for this
         # profile" too — a card carrying the right plugins but another
         # profile's offline render profile is still drift.
@@ -18619,9 +20717,9 @@ class GameBananaBrowser:
                     state == "missing" and eff != DELUXE_CONFIG_DEFAULTS):
                 config_diff = "Online Deluxe config not on card" \
                     if state == "missing" else "Online Deluxe " + detail
-        if not missing and not extra and not config_diff:
+        if not missing and not extra and not config_diff and not pack_notes:
             return "match", "✅ Card is provisioned for this profile", T.GREEN
-        parts = []
+        parts = list(pack_notes)
         if missing:
             names = ", ".join(KNOWN_PLUGINS.get(n, {}).get("name", n)
                               for n in sorted(missing))
@@ -18656,8 +20754,11 @@ class GameBananaBrowser:
         return self._provision_setup(name)
 
     def _clear_all_mods_confirm(self):
-        """Wipe every mod from ``ARCROPOLIS_MODS`` (CFW base files are
-        untouched) after a two-step confirmation."""
+        """"Remove Installed Profiles": take everything a profile's Load to
+        SD put on the card back off — every mod folder under
+        ``ARCROPOLIS_MODS`` plus the plugin / atmosphere files overlay
+        packs laid down — after a two-step confirmation.  The Setup's
+        core and plugins, and the profiles saved on the PC, are untouched."""
         if not os.path.exists(SD_CARD):
             messagebox.showerror("No SD Card",
                                  f"SD card not found at {SD_CARD}")
@@ -18671,27 +20772,31 @@ class GameBananaBrowser:
             existing = []
 
         if not existing:
-            messagebox.showinfo("Nothing to Clear",
-                                "No ARCropolis mods are installed on the "
+            messagebox.showinfo("Nothing to Remove",
+                                "No profile mods are installed on the "
                                 "SD card.")
             return
 
         if not messagebox.askyesno(
-                "⚠ Clear All Mods — Step 1/2",
-                f"This will permanently DELETE all {len(existing)} mod "
-                f"folder(s) from:\n\n  {ARCROPOLIS_MODS}\n\n"
-                "CFW base files (atmosphere, bootloader, switch, …) and "
-                "ARCropolis itself are NOT touched.\n\n"
+                "⚠ Remove Installed Profiles — Step 1/2",
+                f"This removes everything loaded onto the card from a "
+                f"profile: all {len(existing)} mod folder(s) in\n\n"
+                f"  {ARCROPOLIS_MODS}\n\n"
+                "(skins, stages, packs) and the plugin files packs "
+                "brought with them.\n\n"
+                "Not touched: the setup's core and plugins (Atmosphere, "
+                "Skyline, ARCropolis, …) and your saved profiles on this "
+                "PC — Load to SD puts one back.\n\n"
                 "Continue?",
                 icon="warning"):
             return
 
         if not messagebox.askyesno(
-                "⚠ Clear All Mods — ARE YOU SURE?",
+                "⚠ Remove Installed Profiles — ARE YOU SURE?",
                 "LAST CHANCE.\n\n"
-                f"Every ARCropolis mod folder will be removed and the "
+                f"Every mod folder on the card will be removed and the "
                 f"ARCropolis cache cleared.\n\n"
-                "This cannot be undone.\n\nProceed?",
+                "This cannot be undone on the card.\n\nProceed?",
                 icon="warning"):
             return
 
@@ -18699,8 +20804,38 @@ class GameBananaBrowser:
 
     def _do_clear_all_mods(self):
         """Background worker for :meth:`_clear_all_mods_confirm`."""
-        print("\n=== Clearing all ARCropolis mods ===\n")
+        print("\n=== Removing installed profiles from the card ===\n")
+        # Files overlay packs laid outside ultimate/mods (their plugins,
+        # manual pages) go too — collect the record before the wipe.
+        laid = set()
+        try:
+            for entry in os.listdir(ARCROPOLIS_MODS):
+                try:
+                    with open(os.path.join(ARCROPOLIS_MODS, entry,
+                                           ".gb_meta.json"), "r",
+                              encoding="utf-8") as f:
+                        laid.update((json.load(f) or {})
+                                    .get("overlay_files") or [])
+                except Exception:
+                    pass
+        except OSError:
+            pass
         n = self._wipe_arcropolis_mods()
+        for rel in sorted(laid):
+            base = os.path.basename(rel).lower()
+            if "/exefs/" in rel.lower() or (
+                    base in KNOWN_PLUGINS
+                    and not KNOWN_PLUGINS[base].get("pack")):
+                continue                      # core files stay
+            path = os.path.join(SD_CARD, *rel.split("/"))
+            if os.path.isfile(path):
+                try:
+                    os.remove(path)
+                    print(f"    - Removed {rel}")
+                except OSError:
+                    pass
+        for pkey in SETUP_PACKS:              # packs installed before the
+            self._remove_pack_extras(pkey)    # record existed
         print(f"\n=== DONE — removed {n} mod folder(s) ===\n")
         self.root.after(0, self._check_sd)
         self.root.after(100, self._refresh_current_view)
@@ -18896,21 +21031,42 @@ class GameBananaBrowser:
         except Exception:
             return None
 
-    def _clean_provision_confirm(self):
-        """Multi-step confirmation before wiping the SD card."""
+    def _clean_provision_confirm(self, setup_name=None):
+        """Multi-step confirmation before wiping the SD card.
+        *setup_name* is the Setup picked from Clean Provision ▾ (default:
+        the active one); it becomes active only once both steps are
+        confirmed."""
         if not os.path.exists(SD_CARD):
             messagebox.showerror("No SD Card", f"SD card not found at {SD_CARD}")
             return
+        setups = load_setups()["setups"]
+        setup_name = setup_name or self._active_setup_name()
+        if setup_name not in setups:
+            messagebox.showerror("Provision",
+                                 f"{SETUP_NOUN} '{setup_name}' not found.")
+            return
+        stype = setup_type(setups[setup_name])
 
         fs_type = self._get_sd_filesystem() or "unknown"
 
         # First warning
+        pack_note = ""
+        pkey = SETUP_TYPES[stype]["pack"]
+        if pkey:
+            pack_note = (f"The {SETUP_PACKS[pkey]['name']} pack itself is not "
+                         f"installed by Provision — afterwards, Load to SD a "
+                         f"profile that contains it.\n\n")
         ok1 = messagebox.askyesno(
-            "⚠ Clean Provision — Step 1/2",
+            "⚠ Provision — Step 1/2",
+            f"Provision the card with '{setup_name}' ({stype})?\n\n"
             f"This will:\n\n"
             f"  1. FORMAT {SD_CARD} as FAT32  (currently {fs_type})\n"
-            f"  2. Install fresh {self._active_profile} provision\n\n"
-            f"EVERYTHING on the SD card will be erased.\n\n"
+            f"  2. Install the setup's core and plugins fresh\n\n"
+            f"EVERYTHING on the SD card will be erased: every mod, and any "
+            f"games, updates and DLC stored on the card (the Nintendo "
+            f"folder) — those must be downloaded again on the Switch. "
+            f"Save data is on the console and is not affected.\n\n"
+            + pack_note +
             f"Continue?",
             icon="warning")
         if not ok1:
@@ -18918,7 +21074,7 @@ class GameBananaBrowser:
 
         # Second warning
         ok2 = messagebox.askyesno(
-            "⚠ Clean Provision — Step 2/2 — ARE YOU SURE?",
+            "⚠ Provision — Step 2/2 — ARE YOU SURE?",
             f"LAST CHANCE!\n\n"
             f"The SD card ({SD_CARD}) will be FORMATTED as FAT32.\n"
             f"ALL data on the card will be permanently erased.\n\n"
@@ -18928,6 +21084,8 @@ class GameBananaBrowser:
         if not ok2:
             return
 
+        self._set_active_setup(setup_name)
+        self._refresh_setup_chooser()
         self._run_async(self._clean_provision)
 
     def _find_fat32format(self):
@@ -19006,7 +21164,7 @@ class GameBananaBrowser:
                     f"Could not format SD card as FAT32.\n\n"
                     f"For >32 GB cards, place fat32format.exe in:\n"
                     f"  rcm_tools/fat32format.exe\n\n"
-                    f"Then try Clean Provision again.")
+                    f"Then try Provision again.")
             self.root.after(0, _show_err)
             return
 
@@ -19126,6 +21284,11 @@ class GameBananaBrowser:
                 parts.append(f"{removed} removed")
             print(f"\n  Done — {', '.join(parts)}.")
 
+        # Record on the card what it was provisioned as; the Setup tab
+        # shows its checks only for a card that carries this.
+        write_sd_provisioned(self._active_setup_name(),
+                             self._active_setup_cfg()["type"])
+
         if has_conflicts:
             conflicts = self._find_slot_conflicts()
             if conflicts:
@@ -19139,6 +21302,9 @@ class GameBananaBrowser:
         # format), so one chime covers both.
         self.root.after(0, play_clip, SUCCESS_SOUND)
         self.root.after(500, self._show_setup)
+        # Provision lays down core + plugins only: offer the profiles to
+        # load next (this is also where a hosted pack — TR4SH — comes from).
+        self.root.after(900, self._offer_profile_after_provision)
 
     def _remove_plugin(self, nro_name):
         """Remove a plugin .nro from the SD card plugins folder."""
@@ -19149,6 +21315,190 @@ class GameBananaBrowser:
             print(f"    ✓ Removed {plugin_name} ({nro_name})")
         else:
             print(f"    {plugin_name} not found on SD — already removed")
+        write_sd_stamp(nro_name, None, None)
+
+    def _remove_pack_extras(self, pack_key):
+        """What a hosted pack's atmosphere/ overlay left outside
+        ultimate/mods: its plugins and atmosphere extras.  Called by the
+        profile sync when it takes the pack's mod folders off the card
+        (the folders themselves are removed there)."""
+        pack = SETUP_PACKS.get(pack_key)
+        if not pack:
+            return
+        for nro in setup_pack_plugins(pack_key) + list(
+                pack.get("retired_plugins", [])):
+            path = os.path.join(PLUGINS_DIR, nro)
+            if os.path.exists(path):
+                os.remove(path)
+                print(f"    - Removed {nro} ({pack['name']})")
+        for rel in pack.get("atmosphere_extras", []):
+            path = os.path.join(ATMOSPHERE_CONTENTS, rel)
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+                print(f"    - Removed {rel} ({pack['name']})")
+
+    def _offer_profile_after_provision(self):
+        """After a Provision: "Select a profile to load".  Lists the saved
+        profiles by name — click one, then Confirm loads it to the card
+        (no second question), or Skip.  Provision lays down core + plugins
+        only, so this is where the mods (and a hosted pack such as TR4SH)
+        come from.  A profile carrying a pack the card's Setup type can't
+        run is shown but can't be picked.  Runs on the Tk thread."""
+        profiles = load_profiles()
+        if not profiles:
+            return
+        cfg = self._active_setup_cfg()
+        hosted = cfg.get("pack")
+        pack_of = {str(pk["gamebanana_id"]): key
+                   for key, pk in SETUP_PACKS.items()}
+
+        rows = []           # (name, note, selectable)
+        for name in sorted(profiles):
+            mods = [m for m in (profiles[name] or {}).get("mods", [])
+                    if m.get("enabled", True)]
+            packs = {pack_of[str(m.get("mod_id"))] for m in mods
+                     if str(m.get("mod_id")) in pack_of}
+            note = f"{len(mods)} mod{'' if len(mods) == 1 else 's'}"
+            ok = True
+            for pkey in sorted(packs):
+                pname = SETUP_PACKS[pkey]["name"]
+                if pkey == hosted:
+                    note += f"  ·  contains {pname}"
+                else:
+                    host = setup_type_hosting(pkey) or "another"
+                    note += f"  ·  {pname} needs a {host} setup"
+                    ok = False
+            rows.append((name, note, ok))
+        # Profiles carrying this Setup's pack first, unusable ones last.
+        rows.sort(key=lambda r: (not r[2],
+                                 0 if "contains" in r[1] else 1, r[0].lower()))
+
+        win = tk.Toplevel(self.root)
+        wire_cancel_sound(win)
+        win.title("Select a profile to load")
+        win.configure(bg=T.SURFACE)
+        win.transient(self.root)
+        tk.Label(win, text="Select a profile to load", bg=T.SURFACE,
+                 fg=T.ACCENT, font=(T.FONT, T.SZ_LG, "bold")).pack(
+                     anchor="w", padx=14, pady=(12, 2))
+        sub = f"The card is provisioned as {cfg['type']}."
+        if hosted and not setup_pack_installed(hosted):
+            sub += (f"  The {SETUP_PACKS[hosted]['name']} pack is not on it "
+                    f"yet — it comes from a profile.")
+        tk.Label(win, text=sub, bg=T.SURFACE, fg=T.OVERLAY, justify="left",
+                 wraplength=520, font=(T.FONT, T.SZ_SM)).pack(
+                     anchor="w", padx=14, pady=(0, 8))
+
+        # One card-like row per profile (name in bold, details under it),
+        # not a flat text list.  The list is as tall as the profiles need,
+        # up to about two thirds of the screen — only then does it scroll.
+        holder = tk.Frame(win, bg=T.SURFACE)
+        holder.pack(fill="both", expand=True, padx=14)
+        sb = ttk.Scrollbar(holder, orient="vertical")   # packed only if needed
+        canvas = tk.Canvas(holder, bg=T.SURFACE, highlightthickness=0,
+                           width=560, height=120)
+        canvas.pack(side="left", fill="both", expand=True)
+        inner = tk.Frame(canvas, bg=T.SURFACE)
+        inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfigure(inner_id, width=e.width))
+        inner.bind("<Configure>", lambda _e: canvas.configure(
+            scrollregion=canvas.bbox("all")))
+
+        state = {"sel": None}
+        row_widgets = []            # (frame, name_label, note_label, ok)
+
+        def _paint_rows():
+            for i, (fr, nl_, nt, ok) in enumerate(row_widgets):
+                if i == state["sel"]:
+                    bg, fg, sub = T.ACCENT, T.BG, T.BG
+                elif not ok:
+                    bg, fg, sub = T.CRUST, T.OVERLAY, T.OVERLAY
+                else:
+                    bg, fg, sub = T.CRUST, T.FG, T.OVERLAY
+                for w in (fr, nl_, nt):
+                    w.configure(bg=bg)
+                nl_.configure(fg=fg)
+                nt.configure(fg=sub)
+
+        def _picked():
+            i = state["sel"]
+            return rows[i][0] if i is not None and rows[i][2] else None
+
+        def _confirm(_e=None):
+            name = _picked()
+            if not name:
+                return
+            win._smash_saved = True
+            win.destroy()
+            self._load_profile(name, confirmed=True)
+
+        def _select(i):
+            if not rows[i][2]:
+                return                  # can't run on this card's setup
+            state["sel"] = i
+            _paint_rows()
+            confirm_btn.configure(state="normal")
+
+        def _hover(i, on):
+            fr, nl_, nt, ok = row_widgets[i]
+            if not ok or i == state["sel"]:
+                return
+            bg = T.SURFACE1 if on else T.CRUST
+            for w in (fr, nl_, nt):
+                w.configure(bg=bg)
+
+        for i, (name, note, ok) in enumerate(rows):
+            fr = tk.Frame(inner, bg=T.CRUST, cursor="hand2" if ok else "arrow")
+            fr.pack(fill="x", pady=(0, 4))
+            nl_ = tk.Label(fr, text=name, bg=T.CRUST, anchor="w",
+                           font=(T.FONT, T.SZ_MD, "bold"))
+            nl_.pack(fill="x", padx=12, pady=(7, 0))
+            nt = tk.Label(fr, text=note, bg=T.CRUST, anchor="w",
+                          font=(T.FONT, T.SZ_SM))
+            nt.pack(fill="x", padx=12, pady=(0, 7))
+            row_widgets.append((fr, nl_, nt, ok))
+            for w in (fr, nl_, nt):
+                w.bind("<Button-1>", lambda _e, i=i: _select(i))
+                w.bind("<Double-Button-1>",
+                       lambda _e, i=i: (_select(i), _confirm()))
+                w.bind("<Enter>", lambda _e, i=i: _hover(i, True))
+                w.bind("<Leave>", lambda _e, i=i: _hover(i, False))
+
+        # Size the list from the rows as actually drawn (their height
+        # depends on the display scaling): show them all when they fit in
+        # about two thirds of the screen, scroll only beyond that.
+        inner.update_idletasks()
+        need_h = inner.winfo_reqheight()
+        max_h = max(240, int(win.winfo_screenheight() * 0.66) - 200)
+        canvas.configure(height=min(need_h, max_h))
+        if need_h > max_h:
+            sb.configure(command=canvas.yview)
+            sb.pack(side="right", fill="y")
+            canvas.configure(yscrollcommand=sb.set)
+            win.bind("<MouseWheel>", lambda e: canvas.yview_scroll(
+                int(-1 * (e.delta / 120)), "units"))
+
+        btn_row = tk.Frame(win, bg=T.SURFACE)
+        btn_row.pack(fill="x", padx=14, pady=(8, 12))
+        confirm_btn = tk.Button(btn_row, text="Confirm", width=10,
+                                bg=T.GREEN, fg=T.BG, state="disabled",
+                                font=(T.FONT, T.SZ_SM, "bold"), relief="flat",
+                                cursor="hand2", command=_confirm)
+        confirm_btn.pack(side="right")
+        tk.Button(btn_row, text="Skip", width=10, bg=T.SURFACE1, fg=T.FG,
+                  font=(T.FONT, T.SZ_SM, "bold"), relief="flat",
+                  cursor="hand2", command=win.destroy).pack(
+                      side="right", padx=(0, 6))
+        _paint_rows()
+        win.bind("<Return>", _confirm)
+        win.bind("<Escape>", lambda _e: win.destroy())
+        win._picker_rows = row_widgets          # (for tests)
+        win._picker_select = _select
+        win._picker_confirm_btn = confirm_btn
+        win.resizable(False, True)
+        self._place_near(win)
+        self._after_provision_dialog = win      # (tests / re-entry guard)
 
     def _download_plugin_from_github(self, nro_name):
         """Download a plugin .nro from GitHub (always fetches latest)."""
@@ -19163,7 +21513,12 @@ class GameBananaBrowser:
         name = KNOWN_PLUGINS.get(nro_name, {}).get("name", nro_name)
         override = (find_local_arcropolis_override()
                     if nro_name == "libarcropolis.nro" else None)
-        in_chain = nro_name == ONLINE_DELUXE_NRO or nro_name in ONLINE_DELUXE_DEPS
+        # Only an Online Deluxe Setup takes chain members out of the Deluxe
+        # package.  NRO Hook / Smashline are also installed on their own by
+        # other Setup types (TR4SH needs Smashline 2, the package ships 1.x).
+        in_chain = self._deluxe_active() and (
+            nro_name == ONLINE_DELUXE_NRO or nro_name in ONLINE_DELUXE_DEPS)
+        stamp = None                     # (repo, ref) recorded on the card
         if in_chain and repo_key != ONLINE_DELUXE_REPO_KEY \
                 and package_ships(nro_name):
             # The Online Deluxe source's package ships this dependency
@@ -19182,6 +21537,7 @@ class GameBananaBrowser:
             sz = os.path.getsize(dest)
             print(f"    ✓ {name} {version} installed from the package "
                   f"({sz / 1024:.0f} KB)")
+            stamp = (dx_repo, source_ref(ONLINE_DELUXE_REPO_KEY))
         elif override:
             # A hand-placed build in switch_setup/downloads/ beats GitHub,
             # same as the Atmosphere override: when a new Smash version
@@ -19213,6 +21569,14 @@ class GameBananaBrowser:
                     return False
                 sz = os.path.getsize(dest) if os.path.exists(dest) else 0
                 print(f"    ✓ {name} {version} installed ({sz / 1024:.0f} KB)")
+                stamp = (repo, ref)
+
+        # Record where this copy came from (a local override forgets the
+        # stamp), so a Setup that wants a different build replaces it.
+        if stamp:
+            write_sd_stamp(nro_name, stamp[0], stamp[1], version)
+        else:
+            write_sd_stamp(nro_name, None, None)
 
         if nro_name == "libarcropolis.nro":
             req = arcropolis_required_smash_version(dest)
@@ -19253,6 +21617,10 @@ class GameBananaBrowser:
             name = KNOWN_PLUGINS.get(nro_name, {}).get("name", nro_name)
             print(f"    ⚠ Installed {name} from LOCAL copy ({sz / 1024:.0f} KB)")
             print(f"      WARNING: This may be outdated! Check internet and try Update.")
+            # Unknown build: forget the stamp so the Setup check doesn't
+            # vouch for it (the cache holds whichever version was fetched
+            # last, which for Smashline may be the other major version).
+            write_sd_stamp(nro_name, None, None)
             if nro_name == "libarcropolis.nro":
                 req = arcropolis_required_smash_version(dest)
                 if req:
@@ -19420,6 +21788,8 @@ class GameBananaBrowser:
                     shutil.move(tmp, os.path.join(EXEFS_DIR, fn))
                     print(f"    ✓ Installed: {fn}")
                 print(f"    Skyline (pinned by SSBU Online Deluxe) installed.")
+                write_sd_stamp("skyline", dx_repo,
+                               source_ref(ONLINE_DELUXE_REPO_KEY), "pinned")
                 return True
             for tmp in staged.values():
                 try:
@@ -19453,6 +21823,8 @@ class GameBananaBrowser:
                         print(f"    ✓ Installed: {fn}")
             os.remove(tmp)
             print(f"    Skyline {info['version']} installed.")
+            write_sd_stamp("skyline", source_repo("skyline"),
+                           source_ref("skyline"), info["version"])
             return True
         print(f"    ✗ Could not find Skyline release on GitHub{_github_rate_limit_note()}")
         return False
@@ -19976,9 +22348,13 @@ class GameBananaBrowser:
         if not os.path.exists(ARCROPOLIS_MODS):
             return conflicts
         slot_owners = {}  # (fighter, slot) -> [mod_names]
+        # A Setup-owned gameplay pack (TR4SH…) edits fighters across every
+        # slot by design; ARCropolis layers a skin over it.  It is not a
+        # slot collision and must never be offered for reslotting.
+        pack_dirs = {f for k in SETUP_PACKS for f in setup_pack_folders(k)}
         for mod_dir in os.listdir(ARCROPOLIS_MODS):
             mod_path = os.path.join(ARCROPOLIS_MODS, mod_dir)
-            if not os.path.isdir(mod_path):
+            if not os.path.isdir(mod_path) or mod_dir in pack_dirs:
                 continue
             fighter_dir = os.path.join(mod_path, "fighter")
             if not os.path.exists(fighter_dir):
@@ -21735,6 +24111,13 @@ class GameBananaBrowser:
                 archive_path = self._download_mod_archive(mod_id, mod_name)
                 if not archive_path:
                     return
+            # Remember which archive the card's copy came from: for packs
+            # the file name is the version, and the profile sync compares
+            # it with the cache to notice an outdated install.
+            _arch = (os.path.basename(archive_path) if archive_path
+                     else cached_archive_name(mod_id))
+            if metadata and _arch:
+                metadata = dict(metadata, archive=_arch)
 
             if is_stage:
                 # ── Stage install: simple extract & copy, no slot logic ──
@@ -21744,7 +24127,8 @@ class GameBananaBrowser:
                     extracted_dir=(cached_extracted if have_extracted
                                     else None))
                 if dest:
-                    self._post_install_sanity(dest, mod_name)
+                    if not self._is_overlay_install(os.path.basename(dest)):
+                        self._post_install_sanity(dest, mod_name)
                     record_touched_for_mod(mod_id, dest)
                 if archive_path:
                     self._cleanup_archive(archive_path)
@@ -21898,8 +24282,10 @@ class GameBananaBrowser:
                                          extracted_dir=ext_dir)
                 if dest:
                     # Strip orphan UI bntx / empty body slots that
-                    # would freeze SSBU on character-select.
-                    self._post_install_sanity(dest, mod_name)
+                    # would freeze SSBU on character-select (skins only —
+                    # a pack's folders are left as shipped).
+                    if not self._is_overlay_install(os.path.basename(dest)):
+                        self._post_install_sanity(dest, mod_name)
                     # Persist the real (fighter,slot) tuples this mod
                     # actually replaced so subsequent bulk-installs
                     # can pre-flight-check this profile for collisions.
@@ -22360,6 +24746,11 @@ class GameBananaBrowser:
             return
         if heavy:
             self._busy = True
+        # Long jobs get the physics panel above the Log (after a short
+        # delay, so a quick one never flashes it).
+        long_title = self._long_job_title(fn, args)
+        if long_title:
+            self.root.after(0, self._busy_fx_begin, long_title)
         def _worker():
             try:
                 fn(*args, **kwargs)
@@ -22369,7 +24760,43 @@ class GameBananaBrowser:
             finally:
                 if heavy:
                     self.root.after(0, self._done)
+                if long_title:
+                    self.root.after(0, self._busy_fx_end)
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _long_job_title(self, fn, args):
+        """Header text for the physics panel when *fn* is one of the jobs
+        that can run for minutes, else None."""
+        titles = {
+            "_do_load_profile": "Loading profile to the SD card",
+            "_clean_provision": "Provisioning the SD card",
+            "_provision": "Provisioning the SD card",
+            "_update_all_from_github": "Updating all plugins",
+            "_do_install_to_sd": "Installing to the SD card",
+            "_do_clear_all_mods": "Removing installed profiles",
+        }
+        title = titles.get(getattr(fn, "__name__", ""))
+        if title and fn.__name__ == "_do_load_profile" and args:
+            title = f"Loading '{args[0]}' to the SD card"
+        elif title and fn.__name__ == "_do_install_to_sd" and len(args) > 1:
+            title = f"Installing '{args[1]}'"
+        return title
+
+    def _busy_fx_begin(self, title):
+        self._busy_fx_jobs += 1
+        jobs = self._busy_fx_jobs
+        began = time.time()
+
+        def _show():
+            # still the same run, still going → show it
+            if self._busy_fx_jobs >= jobs and self._busy_fx_jobs > 0:
+                self._busy_fx.start(title + " — still working…", began)
+        self.root.after(1500, _show)
+
+    def _busy_fx_end(self):
+        self._busy_fx_jobs = max(0, self._busy_fx_jobs - 1)
+        if self._busy_fx_jobs == 0:
+            self._busy_fx.finish()
 
     def _done(self):
         self._busy = False

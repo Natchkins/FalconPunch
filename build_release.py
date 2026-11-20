@@ -39,6 +39,8 @@ EMBLEM_PNG = "icons8-super-smash-bros-48.png"   # installer header image
 # the folder smash_night.py lives in).  Missing optional ones are skipped.
 RESOURCES = [
     "smash_night.py", "fat32_format.py", "smash_night.ico",
+    # the emblem ball in the Log's physics animation (BusyPhysics)
+    "icons8-super-smash-bros-96.png", "icons8-super-smash-bros-48.png",
     "vanilla_arc_paths.txt.gz", "README.md", "LICENSE",
     "sounds", "photos", "assets", "payloads", "rcm_tools", "smash_mods",
     "switch_setup", "ultimate_tex_cli", "tools",
