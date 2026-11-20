@@ -63,6 +63,41 @@ def programs_dir():
         "Start Menu", "Programs"))
 
 
+def running_pids():
+    """PIDs of every process started from the install folder (the app, and
+    helper tools it launched).  Windows won't let their files be
+    overwritten, so the install would die half-way with 'Permission
+    denied'."""
+    prefix = (install_dir().rstrip("\\/") + os.sep).replace("'", "''")
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith("
+             "'%s', [StringComparison]::OrdinalIgnoreCase) } | "
+             "ForEach-Object { $_.Id }" % prefix],
+            capture_output=True, text=True, timeout=30,
+            creationflags=CREATE_NO_WINDOW)
+        return [int(x) for x in r.stdout.split() if x.isdigit()
+                and int(x) != os.getpid()]
+    except Exception:
+        return []
+
+
+def close_running(wait_s=15):
+    """Close those processes; True once none is left."""
+    import time
+    for pid in running_pids():
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                       capture_output=True, creationflags=CREATE_NO_WINDOW)
+    end = time.time() + wait_s
+    while time.time() < end:
+        if not running_pids():
+            time.sleep(0.5)               # let Windows release the handles
+            return True
+        time.sleep(0.5)
+    return not running_pids()
+
+
 def make_shortcut(lnk, target, workdir, icon):
     subprocess.run(["powershell", "-NoProfile", "-Command",
                     "$s = (New-Object -ComObject WScript.Shell).CreateShortcut('%s'); "
@@ -117,6 +152,8 @@ def run_install(status, done, want_desktop, want_startmenu):
             except Exception:
                 pass                      # a missing shortcut is not fatal
         done(None, made)
+    except PermissionError as e:
+        done("LOCKED:" + str(getattr(e, "filename", "") or e), made)
     except Exception:
         done(traceback.format_exc(), made)
 
@@ -191,10 +228,33 @@ def main():
                                 "your profiles and settings.",
                      font=(FONT, 9), fg="#555").pack(anchor="w", pady=(8, 0))
         ttk.Button(buttons, text="Cancel", command=root.destroy).pack(side="right")
-        b = ttk.Button(buttons, text="Install", command=show_progress)
+        b = ttk.Button(buttons, text="Install", command=start_install)
         b.pack(side="right", padx=(0, 8))
         b.focus_set()
-        root.bind("<Return>", lambda e: show_progress())
+        root.bind("<Return>", lambda e: start_install())
+
+    def start_install():
+        # A running copy keeps its files locked; say so and offer to close
+        # it instead of failing later with "Permission denied".
+        if running_pids():
+            if not messagebox.askyesno(
+                    "Smash Night is running",
+                    "Smash Night is open, so its files can't be replaced.\n\n"
+                    "Close Smash Night now and continue installing?",
+                    parent=root):
+                return
+            root.config(cursor="watch")
+            root.update()
+            ok = close_running()
+            root.config(cursor="")
+            if not ok:
+                messagebox.showwarning(
+                    "Smash Night is running",
+                    "Smash Night could not be closed automatically.\n\n"
+                    "Close it yourself, then click Install again.",
+                    parent=root)
+                return
+        show_progress()
 
     def show_progress():
         root.unbind("<Return>")
@@ -218,6 +278,15 @@ def main():
     def show_finish(err, made):
         busy["on"] = False
         clear()
+        if err and err.startswith("LOCKED:"):
+            messagebox.showwarning(
+                "Smash Night Setup",
+                "A file is in use and could not be replaced:\n\n"
+                + err[len("LOCKED:"):] + "\n\n"
+                "Smash Night (or a tool it started) is probably still "
+                "running. Close it, then click Install again.", parent=root)
+            show_options()
+            return
         if err:
             messagebox.showerror("Smash Night Setup",
                                  "Installation failed:\n\n" + err[-1200:])
